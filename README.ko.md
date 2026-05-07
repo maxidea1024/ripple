@@ -6,6 +6,17 @@
 
 ![hero-banner](docs/hero-banner.png)
 
+```bash
+# 단일 핸들러를 전 서버에서 리프레시
+curl -X POST /ripple/refresh -d '{"pattern": "shop-table"}'
+
+# 이벤트 관련 핸들러 전체 리프레시
+curl -X POST /ripple/refresh -d '{"pattern": "event/*"}'
+
+# 전체 리프레시 — 풀 데이터 리로드, 다운타임 제로
+curl -X POST /ripple/refresh -d '{"pattern": "**"}'
+```
+
 ---
 
 ## 왜 Ripple인가?

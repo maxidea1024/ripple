@@ -6,6 +6,17 @@ The name **Ripple** comes from the way a single stone dropped into water sends r
 
 ![hero-banner](docs/hero-banner.png)
 
+```bash
+# Refresh a single handler across all servers
+curl -X POST /ripple/refresh -d '{"pattern": "shop-table"}'
+
+# Refresh all event-related handlers
+curl -X POST /ripple/refresh -d '{"pattern": "event/*"}'
+
+# Refresh everything — full data reload, zero downtime
+curl -X POST /ripple/refresh -d '{"pattern": "**"}'
+```
+
 ---
 
 ## Why Ripple?

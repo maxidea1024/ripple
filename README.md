@@ -1,8 +1,8 @@
 # @gatrix/ripple
 
-> **Ship data changes to live servers in seconds — not hours.**
->
-> *The name **Ripple** comes from the way a single stone dropped into water sends ripples outward to every shore. One data change, published once, propagates to every server instance — instantly and reliably.*
+**Ship data changes to live servers in seconds — not hours.**
+
+The name **Ripple** comes from the way a single stone dropped into water sends ripples outward to every shore. One data change, published once, propagates to every server instance — instantly and reliably.
 
 ![hero-banner](docs/hero-banner.png)
 

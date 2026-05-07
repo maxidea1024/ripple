@@ -18,7 +18,7 @@
 
 import * as readline from 'readline';
 import { createRipple } from '../src/orchestrator';
-import { ConsoleLogger } from '../src/logger';
+import { createConsoleLoggerFactory } from '../src/logger';
 import { OrchestratorConfig, RefreshContext } from '../src/types';
 
 // ---------------------------------------------------------------------------
@@ -116,8 +116,8 @@ async function main() {
     retry: { maxRetries: 2, retryDelayMs: 500 },
   };
 
-  const logger = new ConsoleLogger('info');
-  const ripple = createRipple(config, logger);
+  const loggerFactory = createConsoleLoggerFactory('info');
+  const ripple = createRipple(config, loggerFactory);
 
   // Register sample handlers
   ripple

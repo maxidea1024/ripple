@@ -51,6 +51,26 @@ You could — until the first time it breaks:
 
 **Ripple is Pub/Sub that actually works in production.**
 
+### Why Redis Streams (Not Kafka, RabbitMQ, etc.)?
+
+You might also wonder: *"Why not use a proper message queue?"*
+
+**Because you already have Redis.** Most game server stacks use Redis for caching, sessions, or leaderboards. Ripple requires zero additional infrastructure — no Kafka cluster, no RabbitMQ broker, no ZooKeeper ensemble. Just the Redis you already run.
+
+| Factor | Dedicated MQ (Kafka/RabbitMQ) | Ripple (Redis Streams) |
+|--------|------------------------------|----------------------|
+| Additional infra | Separate cluster required | **None** — uses existing Redis |
+| Ops complexity | Broker config, partitions, replication | Zero — no new systems to monitor |
+| Deployment cost | $100-500+/mo for managed service | **$0** — already included in your Redis |
+| Learning curve | Topic/partition/consumer-group semantics | Simple XADD/XREADGROUP — 5 minute setup |
+| Latency | 1-10ms (network hop to broker) | **Sub-ms** — same Redis used for cache |
+| Message persistence | Excellent (Kafka: days/weeks) | Good enough — MAXLEN auto-trim, only recent events matter |
+| Throughput | Millions/sec (overkill for config reload) | Thousands/sec (more than enough for data refresh) |
+
+Redis Streams provide **exactly the right level of durability** for config/data refresh: messages persist until ACK'd, survive server restarts, and support consumer groups — without the overhead of running an entire message broker infrastructure.
+
+> **Bottom line:** If your refresh traffic is measured in events/minute (not events/second), spinning up Kafka is like using a firehose to water a houseplant.
+
 ---
 
 ## Prerequisites
@@ -212,6 +232,54 @@ curl -X POST /ripple/refresh -d '{"pattern": "**", "triggeredBy": "deploy"}'
 
 This design follows the principle: **explicit is better than implicit**.
 The caller knows exactly what will be refreshed. No surprises, no hidden cascades.
+
+### Cascade Refresh (Opt-in)
+
+That said, sometimes you **do** want automatic cascading. For example, when `item-table` changes, `shop-config` (which depends on it) and `price-calc` (which depends on `shop-config`) should also reload — in the correct order.
+
+Ripple supports this via the `cascade` flag on refresh requests:
+
+```bash
+# Without cascade (default): only item-table refreshes
+curl -X POST /ripple/refresh -d '{"pattern": "item-table"}'
+
+# With cascade: item-table → shop-config → price-calc (topological order)
+curl -X POST /ripple/refresh -d '{"pattern": "item-table", "cascade": true}'
+```
+
+```
+cascade: false (default)          cascade: true
+─────────────────────────         ─────────────────────────
+  [item-table] ✅ refreshed        [item-table]  ✅ refreshed
+  [shop-config] ⬜ untouched       [shop-config] ✅ auto-refreshed
+  [price-calc]  ⬜ untouched       [price-calc]  ✅ auto-refreshed
+```
+
+#### When to Use Cascade
+
+| Scenario | cascade | Reason |
+|----------|---------|--------|
+| Quick config tweak, known scope | `false` | You know exactly what to refresh |
+| Fundamental data changed (item table, base config) | `true` | Dependents need fresh data too |
+| Deployment / full reload | Unnecessary | Use `"**"` pattern instead |
+| Debugging a specific handler | `false` | Avoid noise from unrelated handlers |
+
+#### Advantages
+
+- **Correctness**: Ensures dependents always see fresh upstream data
+- **Convenience**: No need to manually list all downstream handlers
+- **Order guarantee**: Dependents execute in topological order (dependencies first)
+- **Opt-in per request**: Default behavior remains explicit and predictable
+
+#### Risks and Caveats
+
+> [!WARNING]
+> **Cascade can amplify blast radius.** A single `item-table` refresh with cascade could trigger 10+ handler reloads if the dependency chain is deep. Know your graph before using cascade in production.
+
+- **Performance impact**: Deep chains cause sequential execution. If `A → B → C → D`, all four execute one after another. Monitor total cascade duration via metrics.
+- **Partial failure**: If `B` fails mid-cascade, `C` and `D` still attempt to execute (each has its own lock/retry). This means the cascade is **best-effort**, not transactional.
+- **Debounce interaction**: If a cascaded handler has `debounceMs` set, the cascade still fires immediately (debounce only applies to stream events, not cascade expansion). This is by design — cascade implies urgency.
+- **No infinite loops**: Circular dependencies are detected at startup and rejected. The cascade BFS uses a visited set, so even diamond-shaped graphs (A→B, A→C, B→D, C→D) execute D only once.
 
 ### 2. Wildcard Refresh via API
 

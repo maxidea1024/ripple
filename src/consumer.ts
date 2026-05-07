@@ -200,15 +200,28 @@ export class StreamConsumer {
     };
 
     // Wildcard match
-    const matched = this.registry.match(event.pattern);
+    let matched = this.registry.match(event.pattern);
     if (matched.length === 0) {
       this.logger.debug('No refreshables matched pattern', logCtx);
       await this.ack(entryId);
       return;
     }
 
+    // Cascade: expand with transitive dependents (topological order)
+    if (event.cascade) {
+      const initialKeys = matched.map((r) => r.key);
+      matched = this.registry.collectCascade(initialKeys);
+
+      this.logger.info('Cascade expanded', {
+        ...logCtx,
+        initialKeys,
+        expandedKeys: matched.map((r) => r.key),
+      });
+    }
+
     this.logger.info('Processing event', {
       ...logCtx,
+      cascade: event.cascade ?? false,
       matchedCount: matched.length,
       matchedKeys: matched.map((r) => r.key),
     });
@@ -297,6 +310,7 @@ export class StreamConsumer {
       requestId,
       pattern,
       triggeredBy: map.get('triggeredBy') || undefined,
+      cascade: map.get('cascade') === '1',
       createdAt: Number(createdAt),
     };
   }

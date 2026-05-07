@@ -47,6 +47,8 @@ export class RefreshPublisher {
       event.pattern,
       'triggeredBy',
       event.triggeredBy ?? '',
+      'cascade',
+      event.cascade ? '1' : '0',
       'createdAt',
       String(event.createdAt),
     );
@@ -69,11 +71,13 @@ export class RefreshPublisher {
   static createEvent(
     pattern: string,
     triggeredBy?: string,
+    cascade?: boolean,
   ): RefreshEvent {
     return {
       requestId: nanoid(),
       pattern,
       triggeredBy,
+      cascade,
       createdAt: Date.now(),
     };
   }

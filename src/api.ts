@@ -29,12 +29,12 @@ export function createRefreshRouter(opts: {
 
   /**
    * POST /refresh
-   * Body: { pattern: string, triggeredBy?: string }
-   * Response: { requestId, pattern, matchedKeys, matchedCount, status }
+   * Body: { pattern: string, triggeredBy?: string, cascade?: boolean }
+   * Response: { requestId, pattern, matchedKeys, matchedCount, cascade, status }
    */
   router.post('/refresh', async (req: Request, res: Response) => {
     try {
-      const { pattern, triggeredBy } = req.body;
+      const { pattern, triggeredBy, cascade } = req.body;
 
       if (!pattern || typeof pattern !== 'string') {
         return res.status(400).json({
@@ -53,7 +53,7 @@ export function createRefreshRouter(opts: {
       }
 
       // Create and publish event
-      const event = RefreshPublisher.createEvent(pattern, triggeredBy);
+      const event = RefreshPublisher.createEvent(pattern, triggeredBy, !!cascade);
       await publisher.publish(event);
 
       const matchedKeys = matched.map((r) => r.key);
@@ -70,6 +70,7 @@ export function createRefreshRouter(opts: {
         pattern,
         matchedKeys,
         matchedCount: matchedKeys.length,
+        cascade: !!cascade,
         status: 'published',
       });
     } catch (err: any) {

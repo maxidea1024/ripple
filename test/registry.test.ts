@@ -275,4 +275,62 @@ describe('RefreshableRegistry', () => {
       expect(sorted.indexOf('c')).toBeLessThan(sorted.indexOf('a'));
     });
   });
+
+  // -----------------------------------------------------------------------
+  // collectCascade
+  // -----------------------------------------------------------------------
+
+  describe('collectCascade', () => {
+    it('should return only initial keys when no dependents exist', () => {
+      registry.register(makeRefreshable('item-table'));
+      registry.register(makeRefreshable('localization'));
+
+      const result = registry.collectCascade(['item-table']);
+      expect(result.map((r) => r.key)).toEqual(['item-table']);
+    });
+
+    it('should expand with direct dependents', () => {
+      registry.register(makeRefreshable('item-table'));
+      registry.register(
+        makeRefreshable('shop-config', { dependsOn: ['item-table'] }),
+      );
+      registry.register(makeRefreshable('localization'));
+
+      const result = registry.collectCascade(['item-table']);
+      const keys = result.map((r) => r.key);
+
+      expect(keys).toContain('item-table');
+      expect(keys).toContain('shop-config');
+      expect(keys).not.toContain('localization');
+      expect(keys.indexOf('item-table')).toBeLessThan(
+        keys.indexOf('shop-config'),
+      );
+    });
+
+    it('should expand transitively (A → B → C)', () => {
+      registry.register(makeRefreshable('item-table'));
+      registry.register(
+        makeRefreshable('shop-config', { dependsOn: ['item-table'] }),
+      );
+      registry.register(
+        makeRefreshable('price-calc', { dependsOn: ['shop-config'] }),
+      );
+
+      const result = registry.collectCascade(['item-table']);
+      const keys = result.map((r) => r.key);
+
+      expect(keys).toEqual(['item-table', 'shop-config', 'price-calc']);
+    });
+
+    it('should not duplicate when multiple initial keys share dependents', () => {
+      registry.register(makeRefreshable('a'));
+      registry.register(makeRefreshable('b'));
+      registry.register(makeRefreshable('c', { dependsOn: ['a', 'b'] }));
+
+      const result = registry.collectCascade(['a', 'b']);
+      const keys = result.map((r) => r.key);
+
+      expect(keys).toEqual(['a', 'b', 'c']);
+    });
+  });
 });

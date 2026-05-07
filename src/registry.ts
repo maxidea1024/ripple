@@ -89,6 +89,38 @@ export class RefreshableRegistry {
   }
 
   /**
+   * Given a set of initially matched keys, expand with all transitive
+   * dependents (cascade) and return them in topological order.
+   *
+   * Example: if item-table is refreshed with cascade=true, and
+   * shop-config depends on item-table, and price-calc depends on
+   * shop-config, the result is:
+   *   [item-table, shop-config, price-calc]
+   */
+  collectCascade(initialKeys: string[]): Refreshable[] {
+    const visited = new Set<string>(initialKeys);
+    const queue = [...initialKeys];
+
+    // BFS to find all transitive dependents
+    while (queue.length > 0) {
+      const key = queue.shift()!;
+      for (const dep of this.getDependents(key)) {
+        if (!visited.has(dep.key)) {
+          visited.add(dep.key);
+          queue.push(dep.key);
+        }
+      }
+    }
+
+    // Return in topological order (subset of full sort)
+    const fullOrder = this.topologicalSort();
+    return fullOrder
+      .filter((key) => visited.has(key))
+      .map((key) => this.items.get(key)!)
+      .filter(Boolean);
+  }
+
+  /**
    * Validate the dependency graph:
    * 1. All `dependsOn` references must point to registered keys.
    * 2. No circular dependencies.

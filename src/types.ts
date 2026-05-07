@@ -72,6 +72,13 @@ export interface RefreshEvent {
   /** Optional origin identifier (e.g. 'admin-api', 'data-webhook') */
   triggeredBy?: string;
 
+  /**
+   * If true, handlers that depend on matched handlers (via `dependsOn`)
+   * will also be refreshed automatically, in topological order.
+   * Default: false
+   */
+  cascade?: boolean;
+
   /** Epoch ms when the event was created */
   createdAt: number;
 }

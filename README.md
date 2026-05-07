@@ -1,6 +1,71 @@
 # @gatrix/ripple
 
-Distributed Refresh Orchestrator - broadcast refresh events across all game server instances via Redis Streams.
+> **Ship data changes to live servers in seconds — not hours.**
+
+![hero-banner](docs/hero-banner.png)
+
+---
+
+## Why Ripple?
+
+### The Problem You Already Have
+
+Every live game service hits this wall eventually:
+
+🔴 **"The designers updated the item balance table. We need a server maintenance window."**
+
+A 30-minute maintenance for a single config change. Players are kicked out. Revenue dips. Your Discord fills with complaints. The operations team stays late. Again.
+
+And it's not just balance tables:
+
+| Scenario | Without Ripple | With Ripple |
+|----------|---------------|-------------|
+| Item/shop config update | 🔴 Server restart required | 🟢 Hot-reload in < 1 second |
+| Emergency hotfix for a broken event | 🔴 Schedule maintenance, notify players | 🟢 Publish `event/*` — fixed instantly |
+| Localization typo fix | 🔴 Full deployment pipeline | 🟢 `curl -X POST /ripple/refresh -d '{"pattern":"localization/*"}'` |
+| A/B test config toggle | 🔴 Redeploy all servers | 🟢 One API call, all servers update simultaneously |
+| Multi-server data consistency after DB migration | 🔴 Rolling restart with downtime risk | 🟢 Broadcast `**` — every server reloads every handler |
+
+### How It Works (30-Second Version)
+
+```
+Designer updates item table in admin tool
+        │
+        ▼
+  ┌─────────────┐     Redis Stream     ┌─────────────┐
+  │ Admin API   │ ──── XADD ────────▶ │  Stream:     │
+  │ POST /refresh│                     │  ripple:refresh│
+  └─────────────┘                      └──────┬──────┘
+                                              │
+                          ┌───────────────────┼───────────────────┐
+                          ▼                   ▼                   ▼
+                   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+                   │ Server A    │    │ Server B    │    │ Server C    │
+                   │ XREADGROUP  │    │ XREADGROUP  │    │ XREADGROUP  │
+                   │ → reload()  │    │ → reload()  │    │ → reload()  │
+                   └─────────────┘    └─────────────┘    └─────────────┘
+                   
+  ✅ All servers updated simultaneously. Zero downtime. No restart.
+```
+
+### Why Not Just Use Redis Pub/Sub?
+
+You might think: *"I can already do this with Pub/Sub."*
+
+You could — until the first time it breaks:
+
+| Concern | Redis Pub/Sub | Ripple (Redis Streams) |
+|---------|---------------|----------------------|
+| Server crashes mid-refresh | ❌ Message lost forever | ✅ XPENDING + XCLAIM auto-recovers |
+| Network blip disconnects a server | ❌ All messages during outage are lost | ✅ Consumer resumes from last ACK'd position |
+| Same event processed twice | ❌ No built-in protection | ✅ Deduplication via SET NX EX |
+| Two servers race on same handler | ❌ Both execute simultaneously | ✅ Distributed lock prevents concurrent execution |
+| Handler takes too long | ❌ Blocks everything, no timeout | ✅ Per-handler timeout + automatic retry |
+| Burst of rapid updates | ❌ Each one triggers a full reload | ✅ Debounce merges rapid events into one execution |
+
+**Ripple is Pub/Sub that actually works in production.**
+
+---
 
 ## Prerequisites
 
@@ -16,7 +81,7 @@ Redis Streams were introduced in Redis 5.0. Versions below 5.0 (e.g. the Windows
 
 ![architecture](docs/architecture.png)
 
-Every server instance creates its own Consumer Group on a shared Redis Stream. When a refresh event is published, all servers independently receive and execute matching handlers - like ripples spreading across water.
+Every server instance creates its own Consumer Group on a shared Redis Stream. When a refresh event is published, all servers independently receive and execute matching handlers — like ripples spreading across water.
 
 ## Key Features
 

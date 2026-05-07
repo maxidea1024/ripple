@@ -1,0 +1,80 @@
+﻿// ---------------------------------------------------------------------------
+// @gatrix/ripple ??Refresh Publisher
+// ---------------------------------------------------------------------------
+
+import Redis from 'ioredis';
+import { nanoid } from 'nanoid';
+import { RippleLogger } from './logger';
+import { RefreshEvent, StreamConfig, DEFAULT_STREAM_CONFIG } from './types';
+import { RippleMetrics } from './metrics';
+
+/**
+ * Publishes refresh events to the Redis Stream.
+ */
+export class RefreshPublisher {
+  private readonly redis: Redis.Redis;
+  private readonly logger: RippleLogger;
+  private readonly metrics: RippleMetrics;
+  private readonly streamConfig: StreamConfig;
+
+  constructor(
+    redis: Redis.Redis,
+    logger: RippleLogger,
+    metrics: RippleMetrics,
+    streamConfig?: Partial<StreamConfig>,
+  ) {
+    this.redis = redis;
+    this.logger = logger.child({ module: 'publisher' });
+    this.metrics = metrics;
+    this.streamConfig = { ...DEFAULT_STREAM_CONFIG, ...streamConfig };
+  }
+
+  /**
+   * Publish a refresh event to the stream.
+   *
+   * @returns the stream entry ID assigned by Redis.
+   */
+  async publish(event: RefreshEvent): Promise<string> {
+    const entryId = await (this.redis as any).xadd(
+      this.streamConfig.key,
+      'MAXLEN',
+      '~',
+      String(this.streamConfig.maxLen),
+      '*',
+      'requestId',
+      event.requestId,
+      'pattern',
+      event.pattern,
+      'triggeredBy',
+      event.triggeredBy ?? '',
+      'createdAt',
+      String(event.createdAt),
+    );
+
+    this.metrics.publishTotal.inc();
+
+    this.logger.info('Event published', {
+      requestId: event.requestId,
+      pattern: event.pattern,
+      triggeredBy: event.triggeredBy,
+      entryId,
+    });
+
+    return entryId;
+  }
+
+  /**
+   * Create a RefreshEvent with auto-generated requestId and timestamp.
+   */
+  static createEvent(
+    pattern: string,
+    triggeredBy?: string,
+  ): RefreshEvent {
+    return {
+      requestId: nanoid(),
+      pattern,
+      triggeredBy,
+      createdAt: Date.now(),
+    };
+  }
+}

@@ -483,7 +483,7 @@ Timeout in milliseconds for `XREADGROUP BLOCK`. The consumer waits up to this lo
 
 Number of messages to read per `XREADGROUP` call (`COUNT` parameter).
 
-**When to increase:** If your system publishes many events in bursts (e.g. CMS bulk update), increase to 50-100 to process batches efficiently.
+**When to increase:** If your system publishes many events in bursts (e.g. bulk data update from admin tools), increase to 50-100 to process batches efficiently.
 
 **When to decrease:** If each handler is expensive (>5s), set to 1-3 to avoid queuing too many heavy operations.
 
@@ -687,7 +687,7 @@ Array of handler keys that must complete before this handler during bootstrap. S
 
 When set, multiple refresh events for this handler within the debounce window are merged into a single execution. Only the **last** event in the window triggers the actual refresh.
 
-**When to use:** For handlers triggered by CMS edits where an editor might save multiple times in quick succession. A 2-3 second debounce prevents redundant reloads.
+**When to use:** For handlers triggered by admin tool edits where an editor might save multiple times in quick succession. A 2-3 second debounce prevents redundant reloads.
 
 **WARNING:** Debounced executions are fire-and-forget. The stream message is ACK'd immediately, and the actual handler runs after the debounce window expires. If the server crashes during the debounce window, the pending execution is lost.
 

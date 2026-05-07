@@ -27,7 +27,7 @@ import { OrchestratorConfig, RefreshContext } from '../src/types';
 
 function parseArgs(): { host: string; port: number; serverId: string } {
   const args = process.argv.slice(2);
-  const opts = { host: 'localhost', port: 6379, serverId: `demo-${process.pid}` };
+  const opts = { host: 'localhost', port: 46379, serverId: `demo-${process.pid}` };
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--host' && args[i + 1]) opts.host = args[++i];

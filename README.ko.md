@@ -1034,7 +1034,3 @@ yarn build
 ```typescript
 import { createRipple } from '@gatrix/ripple';
 ```
-
-## 라이선스
-
-MIT

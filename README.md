@@ -1038,7 +1038,3 @@ Then import in game server code:
 ```typescript
 import { createRipple } from '@gatrix/ripple';
 ```
-
-## License
-
-MIT

@@ -30,25 +30,7 @@ And it's not just balance tables:
 
 ### How It Works (30-Second Version)
 
-```
-Designer updates item table in admin tool
-        │
-        ▼
-  ┌─────────────┐     Redis Stream     ┌─────────────┐
-  │ Admin API   │ ──── XADD ────────▶ │  Stream:     │
-  │ POST /refresh│                     │  ripple:refresh│
-  └─────────────┘                      └──────┬──────┘
-                                              │
-                          ┌───────────────────┼───────────────────┐
-                          ▼                   ▼                   ▼
-                   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-                   │ Server A    │    │ Server B    │    │ Server C    │
-                   │ XREADGROUP  │    │ XREADGROUP  │    │ XREADGROUP  │
-                   │ → reload()  │    │ → reload()  │    │ → reload()  │
-                   └─────────────┘    └─────────────┘    └─────────────┘
-                   
-  ✅ All servers updated simultaneously. Zero downtime. No restart.
-```
+![how-it-works](docs/how-it-works.png)
 
 ### Why Not Just Use Redis Pub/Sub?
 

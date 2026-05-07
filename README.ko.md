@@ -30,25 +30,7 @@
 
 ### 동작 원리 (30초 버전)
 
-```
-기획팀이 어드민 도구에서 아이템 테이블 업데이트
-        │
-        ▼
-  ┌─────────────┐     Redis Stream     ┌─────────────┐
-  │ Admin API   │ ──── XADD ────────▶ │  Stream:     │
-  │ POST /refresh│                     │  ripple:refresh│
-  └─────────────┘                      └──────┬──────┘
-                                              │
-                          ┌───────────────────┼───────────────────┐
-                          ▼                   ▼                   ▼
-                   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-                   │ Server A    │    │ Server B    │    │ Server C    │
-                   │ XREADGROUP  │    │ XREADGROUP  │    │ XREADGROUP  │
-                   │ → reload()  │    │ → reload()  │    │ → reload()  │
-                   └─────────────┘    └─────────────┘    └─────────────┘
-                   
-  ✅ 모든 서버 동시 업데이트. 다운타임 제로. 재시작 없음.
-```
+![how-it-works](docs/how-it-works.png)
 
 ### Redis Pub/Sub를 쓰면 안 되나?
 

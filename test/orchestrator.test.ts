@@ -1,9 +1,9 @@
-﻿// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // @gatrix/ripple ??Orchestrator Tests
 // ---------------------------------------------------------------------------
 
 import { createRipple } from '../src/orchestrator';
-import { SilentLogger } from '../src/logger';
+import { createSilentLoggerFactory } from '../src/logger';
 import { OrchestratorConfig, RefreshContext } from '../src/types';
 
 // Mock ioredis
@@ -25,10 +25,10 @@ describe('createRipple', () => {
     logLevel: 'silent',
     bootstrap: { failFast: false },
   };
-  const logger = new SilentLogger();
+  const silentLoggerFactory = createSilentLoggerFactory();
 
   it('should create a ripple instance with chainable register', () => {
-    const ripple = createRipple(config, logger);
+    const ripple = createRipple(config, silentLoggerFactory);
 
     const result = ripple
       .register({
@@ -45,7 +45,7 @@ describe('createRipple', () => {
   });
 
   it('should throw on duplicate registration', () => {
-    const ripple = createRipple(config, logger);
+    const ripple = createRipple(config, silentLoggerFactory);
 
     ripple.register({
       key: 'item-table',
@@ -61,7 +61,7 @@ describe('createRipple', () => {
   });
 
   it('should start and bootstrap successfully', async () => {
-    const ripple = createRipple(config, logger);
+    const ripple = createRipple(config, silentLoggerFactory);
 
     const handler = jest.fn().mockResolvedValue(undefined);
     ripple.register({ key: 'item-table', refresh: handler });
@@ -80,7 +80,7 @@ describe('createRipple', () => {
   });
 
   it('should throw if started twice', async () => {
-    const ripple = createRipple(config, logger);
+    const ripple = createRipple(config, silentLoggerFactory);
     ripple.register({
       key: 'a',
       refresh: jest.fn().mockResolvedValue(undefined),
@@ -92,7 +92,7 @@ describe('createRipple', () => {
   });
 
   it('should create an Express router', () => {
-    const ripple = createRipple(config, logger);
+    const ripple = createRipple(config, silentLoggerFactory);
     const router = ripple.createRouter();
 
     expect(router).toBeDefined();
@@ -108,7 +108,7 @@ describe('createRipple', () => {
   });
 
   it('should handle dependency validation on start', async () => {
-    const ripple = createRipple(config, logger);
+    const ripple = createRipple(config, silentLoggerFactory);
 
     ripple.register({
       key: 'a',

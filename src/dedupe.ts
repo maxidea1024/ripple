@@ -1,9 +1,9 @@
-﻿// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // @gatrix/ripple ??Deduplication Checker
 // ---------------------------------------------------------------------------
 
 import Redis from 'ioredis';
-import { RippleLogger } from './logger';
+import { RippleLoggerFactory } from './logger';
 
 /**
  * Prevents duplicate execution of the same (requestId, refreshKey)
@@ -13,12 +13,12 @@ import { RippleLogger } from './logger';
  */
 export class DedupeChecker {
   private readonly redis: Redis.Redis;
-  private readonly logger: RippleLogger;
+  private readonly logger: ReturnType<RippleLoggerFactory>;
   private readonly keyPrefix: string;
 
-  constructor(redis: Redis.Redis, logger: RippleLogger, keyPrefix = 'ripple') {
+  constructor(redis: Redis.Redis, createLogger: RippleLoggerFactory, keyPrefix = 'ripple') {
     this.redis = redis;
-    this.logger = logger.child({ module: 'dedupe' });
+    this.logger = createLogger('dedupe');
     this.keyPrefix = keyPrefix;
   }
 

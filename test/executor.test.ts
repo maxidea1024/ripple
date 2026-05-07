@@ -1,11 +1,11 @@
-﻿// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // @gatrix/ripple ??Executor Tests
 // ---------------------------------------------------------------------------
 
 import { RefreshExecutor } from '../src/executor';
 import { DistributedLock } from '../src/lock';
 import { RippleMetrics } from '../src/metrics';
-import { SilentLogger } from '../src/logger';
+import { createSilentLoggerFactory } from '../src/logger';
 import { RedisMock } from './helpers/redis-mock';
 import { Refreshable, RefreshContext } from '../src/types';
 
@@ -26,17 +26,17 @@ describe('RefreshExecutor', () => {
   let lock: DistributedLock;
   let metrics: RippleMetrics;
   let executor: RefreshExecutor;
-  const logger = new SilentLogger();
+  const silentLoggerFactory = createSilentLoggerFactory();
   const serverId = 'server-test';
 
   beforeEach(() => {
     redis = new RedisMock();
-    lock = new DistributedLock(redis as any, logger);
+    lock = new DistributedLock(redis as any, silentLoggerFactory);
     metrics = new RippleMetrics();
     executor = new RefreshExecutor({
       lock,
       metrics,
-      logger,
+      createLogger: silentLoggerFactory,
       serverId,
       retryConfig: {
         maxRetries: 2,

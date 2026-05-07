@@ -1,20 +1,20 @@
-﻿// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // @gatrix/ripple ??Dedupe Tests
 // ---------------------------------------------------------------------------
 
 import { DedupeChecker } from '../src/dedupe';
 import { RedisMock } from './helpers/redis-mock';
-import { SilentLogger } from '../src/logger';
+import { createSilentLoggerFactory } from '../src/logger';
 
 describe('DedupeChecker', () => {
   let redis: RedisMock;
   let dedupe: DedupeChecker;
-  const logger = new SilentLogger();
+  const silentLoggerFactory = createSilentLoggerFactory();
   const serverId = 'server-test';
 
   beforeEach(() => {
     redis = new RedisMock();
-    dedupe = new DedupeChecker(redis as any, logger);
+    dedupe = new DedupeChecker(redis as any, silentLoggerFactory);
   });
 
   describe('markIfNew', () => {

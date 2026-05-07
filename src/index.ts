@@ -1,4 +1,4 @@
-﻿// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // @gatrix/ripple ??Public API
 // ---------------------------------------------------------------------------
 
@@ -24,8 +24,9 @@ export {
 // Logger
 export {
   RippleLogger,
-  ConsoleLogger,
-  SilentLogger,
+  RippleLoggerFactory,
+  createConsoleLoggerFactory,
+  createSilentLoggerFactory,
   LogLevel,
 } from './logger';
 

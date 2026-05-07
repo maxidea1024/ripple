@@ -1,4 +1,4 @@
-﻿// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // @gatrix/ripple ??Consumer Tests
 // ---------------------------------------------------------------------------
 
@@ -9,7 +9,7 @@ import { DistributedLock } from '../src/lock';
 import { DedupeChecker } from '../src/dedupe';
 import { DebounceManager } from '../src/debounce';
 import { RippleMetrics } from '../src/metrics';
-import { SilentLogger } from '../src/logger';
+import { createSilentLoggerFactory } from '../src/logger';
 import { RedisMock } from './helpers/redis-mock';
 import { Refreshable, RefreshContext } from '../src/types';
 
@@ -33,20 +33,20 @@ describe('StreamConsumer', () => {
   let dedupe: DedupeChecker;
   let debounce: DebounceManager;
   let metrics: RippleMetrics;
-  const logger = new SilentLogger();
+  const silentLoggerFactory = createSilentLoggerFactory();
   const serverId = 'server-test';
 
   beforeEach(() => {
     redis = new RedisMock();
     registry = new RefreshableRegistry();
     metrics = new RippleMetrics();
-    const lock = new DistributedLock(redis as any, logger);
-    dedupe = new DedupeChecker(redis as any, logger);
-    debounce = new DebounceManager(logger, metrics);
+    const lock = new DistributedLock(redis as any, silentLoggerFactory);
+    dedupe = new DedupeChecker(redis as any, silentLoggerFactory);
+    debounce = new DebounceManager(silentLoggerFactory, metrics);
     executor = new RefreshExecutor({
       lock,
       metrics,
-      logger,
+      createLogger: silentLoggerFactory,
       serverId,
       retryConfig: {
         maxRetries: 0,
@@ -59,7 +59,7 @@ describe('StreamConsumer', () => {
 
     consumer = new StreamConsumer({
       redis: redis as any,
-      logger,
+      createLogger: silentLoggerFactory,
       registry,
       executor,
       dedupe,

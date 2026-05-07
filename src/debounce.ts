@@ -1,8 +1,8 @@
-﻿// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // @gatrix/ripple ??Debounce Manager
 // ---------------------------------------------------------------------------
 
-import { RippleLogger } from './logger';
+import { RippleLoggerFactory } from './logger';
 import { RefreshEvent } from './types';
 import { RippleMetrics } from './metrics';
 
@@ -21,11 +21,11 @@ interface PendingDebounce {
  */
 export class DebounceManager {
   private readonly pending = new Map<string, PendingDebounce>();
-  private readonly logger: RippleLogger;
+  private readonly logger: ReturnType<RippleLoggerFactory>;
   private readonly metrics: RippleMetrics;
 
-  constructor(logger: RippleLogger, metrics: RippleMetrics) {
-    this.logger = logger.child({ module: 'debounce' });
+  constructor(createLogger: RippleLoggerFactory, metrics: RippleMetrics) {
+    this.logger = createLogger('debounce');
     this.metrics = metrics;
   }
 

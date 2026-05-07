@@ -91,11 +91,11 @@ ripple.register({
   timeoutMs: 10000,
 });
 
-// Event data with debounce: rapid CMS edits are merged
+// Event data with debounce: rapid edits from data tools are merged
 ripple.register({
   key: 'event/summer',
   refresh: async (ctx) => {
-    const eventData = await cms.fetchEvent('summer');
+    const eventData = await dataService.fetchEvent('summer');
     EventManager.update('summer', eventData);
   },
   debounceMs: 3000,  // 3 second window
@@ -185,20 +185,20 @@ curl -X POST http://localhost:3000/ripple/refresh \
 
 # Refresh exact key
 curl -X POST http://localhost:3000/ripple/refresh \
-  -d '{"pattern": "item-table", "triggeredBy": "cms-webhook"}'
+  -d '{"pattern": "item-table", "triggeredBy": "data-webhook"}'
 ```
 
 ### 3. Programmatic Publishing (Server-to-Server)
 
 ```typescript
-// From a CMS webhook handler:
-app.post('/webhook/cms', async (req, res) => {
+// From a data webhook handler:
+app.post('/webhook/data-update', async (req, res) => {
   const { contentType } = req.body;
 
   // Publish refresh event - all servers will pick it up
   const event = RefreshPublisher.createEvent(
-    `cms/${contentType}`,
-    'cms-webhook',
+    `data/${contentType}`,
+    'data-webhook',
   );
   await ripple.publisher.publish(event);
 
@@ -206,44 +206,34 @@ app.post('/webhook/cms', async (req, res) => {
 });
 ```
 
-### 4. Integrating with Existing Logger (e.g., winston/mlog)
+### 4. Integrating with Existing Logger (e.g., winston, pino)
 
 ```typescript
-import { createRipple, RippleLogger } from '@gatrix/ripple';
-import mlog from '../motiflib/mlog';
+import { createRipple, RippleLoggerFactory } from '@gatrix/ripple';
+import myLogger from './my-logger';
 
-// Wrap existing logger to match RippleLogger interface
-const rippleLogger: RippleLogger = {
-  debug: (msg, meta) => mlog.debug(`[ripple] ${msg}`, meta),
-  info:  (msg, meta) => mlog.info(`[ripple] ${msg}`, meta),
-  warn:  (msg, meta) => mlog.warn(`[ripple] ${msg}`, meta),
-  error: (msg, meta) => mlog.error(`[ripple] ${msg}`, meta),
-  child: (bindings) => ({
-    debug: (msg, meta) => mlog.debug(`[ripple:${bindings.module}] ${msg}`, meta),
-    info:  (msg, meta) => mlog.info(`[ripple:${bindings.module}] ${msg}`, meta),
-    warn:  (msg, meta) => mlog.warn(`[ripple:${bindings.module}] ${msg}`, meta),
-    error: (msg, meta) => mlog.error(`[ripple:${bindings.module}] ${msg}`, meta),
-    child: function(b) { return this; },
-  }),
-};
+// Wrap existing logger to match RippleLoggerFactory interface
+const createLogger: RippleLoggerFactory = (module) => ({
+  debug: (msg, meta) => myLogger.debug(`[ripple:${module}] ${msg}`, meta),
+  info:  (msg, meta) => myLogger.info(`[ripple:${module}] ${msg}`, meta),
+  warn:  (msg, meta) => myLogger.warn(`[ripple:${module}] ${msg}`, meta),
+  error: (msg, meta) => myLogger.error(`[ripple:${module}] ${msg}`, meta),
+});
 
-const ripple = createRipple(config, rippleLogger);
+const ripple = createRipple(config, createLogger);
 ```
 
 ### 5. Graceful Shutdown Integration
 
 ```typescript
-import { registerShutdownHandler } from '../motiflib/processShutdown';
-
 const ripple = createRipple(config);
 await ripple.start();
 
-// Register with existing shutdown system
-registerShutdownHandler({
-  async stop() {
-    await ripple.shutdown();
-    // Consumer stops, pending debounces flush, Redis disconnects
-  },
+// Register with your existing shutdown system
+process.on('SIGTERM', async () => {
+  await ripple.shutdown();
+  // Consumer stops, pending debounces flush, Redis disconnects
+  process.exit(0);
 });
 ```
 

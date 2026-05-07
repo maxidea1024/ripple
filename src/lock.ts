@@ -1,9 +1,9 @@
-﻿// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // @gatrix/ripple ??Distributed Lock
 // ---------------------------------------------------------------------------
 
 import Redis from 'ioredis';
-import { RippleLogger } from './logger';
+import { RippleLoggerFactory } from './logger';
 
 /**
  * Redis-based distributed lock using SET NX PX.
@@ -16,7 +16,7 @@ import { RippleLogger } from './logger';
  */
 export class DistributedLock {
   private readonly redis: Redis.Redis;
-  private readonly logger: RippleLogger;
+  private readonly logger: ReturnType<RippleLoggerFactory>;
   private readonly keyPrefix: string;
 
   /** Lua script: compare-and-swap release */
@@ -35,9 +35,9 @@ export class DistributedLock {
     return 0
   `;
 
-  constructor(redis: Redis.Redis, logger: RippleLogger, keyPrefix = 'ripple') {
+  constructor(redis: Redis.Redis, createLogger: RippleLoggerFactory, keyPrefix = 'ripple') {
     this.redis = redis;
-    this.logger = logger.child({ module: 'lock' });
+    this.logger = createLogger('lock');
     this.keyPrefix = keyPrefix;
   }
 

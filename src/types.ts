@@ -1,4 +1,4 @@
-﻿// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // @gatrix/ripple ??Type Definitions
 // ---------------------------------------------------------------------------
 
@@ -69,7 +69,7 @@ export interface RefreshEvent {
   /** Glob pattern (e.g. 'event/*') */
   pattern: string;
 
-  /** Optional origin identifier (e.g. 'admin-api', 'cms-webhook') */
+  /** Optional origin identifier (e.g. 'admin-api', 'data-webhook') */
   triggeredBy?: string;
 
   /** Epoch ms when the event was created */
@@ -168,7 +168,7 @@ export interface ApiConfig {
 
 export interface OrchestratorConfig {
   /** Unique server identifier (default: hostname-pid) */
-  serverId: string;
+  serverId?: string;
 
   redis: RedisConfig;
   stream?: Partial<StreamConfig>;

@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import Redis from 'ioredis';
-import { RippleLogger } from './logger';
+import { RippleLogger, RippleLoggerFactory } from './logger';
 import {
   RefreshEvent,
   RefreshContext,
@@ -48,7 +48,7 @@ export class StreamConsumer {
 
   constructor(opts: {
     redis: Redis.Redis;
-    logger: RippleLogger;
+    createLogger: RippleLoggerFactory;
     registry: RefreshableRegistry;
     executor: RefreshExecutor;
     dedupe: DedupeChecker;
@@ -60,7 +60,7 @@ export class StreamConsumer {
     dedupeConfig?: Partial<DedupeConfig>;
   }) {
     this.redis = opts.redis;
-    this.logger = opts.logger.child({ module: 'consumer' });
+    this.logger = opts.createLogger('consumer');
     this.registry = opts.registry;
     this.executor = opts.executor;
     this.dedupe = opts.dedupe;
@@ -193,21 +193,22 @@ export class StreamConsumer {
       return;
     }
 
-    const log = this.logger.child({
+    const logCtx = {
       requestId: event.requestId,
       pattern: event.pattern,
       entryId,
-    });
+    };
 
     // Wildcard match
     const matched = this.registry.match(event.pattern);
     if (matched.length === 0) {
-      log.debug('No refreshables matched pattern');
+      this.logger.debug('No refreshables matched pattern', logCtx);
       await this.ack(entryId);
       return;
     }
 
-    log.info('Processing event', {
+    this.logger.info('Processing event', {
+      ...logCtx,
       matchedCount: matched.length,
       matchedKeys: matched.map((r) => r.key),
     });
@@ -226,7 +227,7 @@ export class StreamConsumer {
 
         if (!isNew) {
           this.metrics.dedupeSkipTotal.inc();
-          log.debug('Skipped (dedupe)', { refreshKey: refreshable.key });
+          this.logger.debug('Skipped (dedupe)', { ...logCtx, refreshKey: refreshable.key });
           continue;
         }
 
@@ -245,7 +246,8 @@ export class StreamConsumer {
               return this.executor.execute(refreshable, ctx);
             })
             .catch((err) => {
-              log.error('Debounced execution failed', {
+              this.logger.error('Debounced execution failed', {
+                ...logCtx,
                 refreshKey: refreshable.key,
                 error: err?.message,
               });
@@ -261,7 +263,8 @@ export class StreamConsumer {
 
           const result = await this.executor.execute(refreshable, ctx);
 
-          log.info('Refresh result', {
+          this.logger.info('Refresh result', {
+            ...logCtx,
             refreshKey: refreshable.key,
             status: result.status,
             durationMs: result.durationMs,

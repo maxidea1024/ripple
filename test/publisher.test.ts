@@ -1,22 +1,22 @@
-﻿// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // @gatrix/ripple ??Publisher Tests
 // ---------------------------------------------------------------------------
 
 import { RefreshPublisher } from '../src/publisher';
 import { RedisMock } from './helpers/redis-mock';
-import { SilentLogger } from '../src/logger';
+import { createSilentLoggerFactory } from '../src/logger';
 import { RippleMetrics } from '../src/metrics';
 
 describe('RefreshPublisher', () => {
   let redis: RedisMock;
   let publisher: RefreshPublisher;
   let metrics: RippleMetrics;
-  const logger = new SilentLogger();
+  const silentLoggerFactory = createSilentLoggerFactory();
 
   beforeEach(() => {
     redis = new RedisMock();
     metrics = new RippleMetrics();
-    publisher = new RefreshPublisher(redis as any, logger, metrics);
+    publisher = new RefreshPublisher(redis as any, silentLoggerFactory, metrics);
   });
 
   describe('publish', () => {
@@ -37,7 +37,7 @@ describe('RefreshPublisher', () => {
     });
 
     it('should store event fields in stream', async () => {
-      const event = RefreshPublisher.createEvent('localization/*', 'cms-webhook');
+      const event = RefreshPublisher.createEvent('localization/*', 'data-webhook');
       await publisher.publish(event);
 
       const len = await redis.xlen('refresh-stream');

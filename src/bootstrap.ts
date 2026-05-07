@@ -1,8 +1,8 @@
-﻿// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // @gatrix/ripple ??Bootstrap Loader
 // ---------------------------------------------------------------------------
 
-import { RippleLogger } from './logger';
+import { RippleLogger, RippleLoggerFactory } from './logger';
 import {
   BootstrapOptions,
   BootstrapResult,
@@ -28,11 +28,11 @@ export class BootstrapLoader {
   constructor(
     registry: RefreshableRegistry,
     executor: RefreshExecutor,
-    logger: RippleLogger,
+    createLogger: RippleLoggerFactory,
   ) {
     this.registry = registry;
     this.executor = executor;
-    this.logger = logger.child({ module: 'bootstrap' });
+    this.logger = createLogger('bootstrap');
   }
 
   /**

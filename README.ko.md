@@ -90,11 +90,11 @@ ripple.register({
   timeoutMs: 10000,
 });
 
-// 이벤트 데이터 + 디바운스: CMS에서 빠르게 연속 수정해도 3초 내 1회만 실행
+// 이벤트 데이터 + 디바운스: 기획 데이터 도구에서 빠르게 연속 수정해도 3초 내 1회만 실행
 ripple.register({
   key: 'event/summer',
   refresh: async (ctx) => {
-    const eventData = await cms.fetchEvent('summer');
+    const eventData = await dataService.fetchEvent('summer');
     EventManager.update('summer', eventData);
   },
   debounceMs: 3000,
@@ -183,20 +183,20 @@ curl -X POST http://localhost:3000/ripple/refresh \
 
 # 특정 키만 리프레시
 curl -X POST http://localhost:3000/ripple/refresh \
-  -d '{"pattern": "item-table", "triggeredBy": "cms-webhook"}'
+  -d '{"pattern": "item-table", "triggeredBy": "data-webhook"}'
 ```
 
 ### 3. 프로그래밍 방식 발행 (서버 간 통신)
 
 ```typescript
-// CMS 웹훅 핸들러에서:
-app.post('/webhook/cms', async (req, res) => {
+// 기획 데이터 웹훅 핸들러에서:
+app.post('/webhook/data-update', async (req, res) => {
   const { contentType } = req.body;
 
   // 리프레시 이벤트 발행 - 모든 서버가 수신
   const event = RefreshPublisher.createEvent(
-    `cms/${contentType}`,
-    'cms-webhook',
+    `data/${contentType}`,
+    'data-webhook',
   );
   await ripple.publisher.publish(event);
 
@@ -204,44 +204,34 @@ app.post('/webhook/cms', async (req, res) => {
 });
 ```
 
-### 4. 기존 로거 연동 (winston/mlog)
+### 4. 기존 로거 연동 (winston, pino 등)
 
 ```typescript
-import { createRipple, RippleLogger } from '@gatrix/ripple';
-import mlog from '../motiflib/mlog';
+import { createRipple, RippleLoggerFactory } from '@gatrix/ripple';
+import myLogger from './my-logger';
 
-// 기존 로거를 RippleLogger 인터페이스에 맞게 래핑
-const rippleLogger: RippleLogger = {
-  debug: (msg, meta) => mlog.debug(`[ripple] ${msg}`, meta),
-  info:  (msg, meta) => mlog.info(`[ripple] ${msg}`, meta),
-  warn:  (msg, meta) => mlog.warn(`[ripple] ${msg}`, meta),
-  error: (msg, meta) => mlog.error(`[ripple] ${msg}`, meta),
-  child: (bindings) => ({
-    debug: (msg, meta) => mlog.debug(`[ripple:${bindings.module}] ${msg}`, meta),
-    info:  (msg, meta) => mlog.info(`[ripple:${bindings.module}] ${msg}`, meta),
-    warn:  (msg, meta) => mlog.warn(`[ripple:${bindings.module}] ${msg}`, meta),
-    error: (msg, meta) => mlog.error(`[ripple:${bindings.module}] ${msg}`, meta),
-    child: function(b) { return this; },
-  }),
-};
+// 기존 로거를 RippleLoggerFactory 인터페이스에 맞게 래핑
+const createLogger: RippleLoggerFactory = (module) => ({
+  debug: (msg, meta) => myLogger.debug(`[ripple:${module}] ${msg}`, meta),
+  info:  (msg, meta) => myLogger.info(`[ripple:${module}] ${msg}`, meta),
+  warn:  (msg, meta) => myLogger.warn(`[ripple:${module}] ${msg}`, meta),
+  error: (msg, meta) => myLogger.error(`[ripple:${module}] ${msg}`, meta),
+});
 
-const ripple = createRipple(config, rippleLogger);
+const ripple = createRipple(config, createLogger);
 ```
 
 ### 5. 그레이스풀 셧다운 연동
 
 ```typescript
-import { registerShutdownHandler } from '../motiflib/processShutdown';
-
 const ripple = createRipple(config);
 await ripple.start();
 
 // 기존 셧다운 시스템에 등록
-registerShutdownHandler({
-  async stop() {
-    await ripple.shutdown();
-    // Consumer 정지, 대기 중 디바운스 즉시 실행, Redis 연결 해제
-  },
+process.on('SIGTERM', async () => {
+  await ripple.shutdown();
+  // Consumer 정지, 대기 중 디바운스 즉시 실행, Redis 연결 해제
+  process.exit(0);
 });
 ```
 

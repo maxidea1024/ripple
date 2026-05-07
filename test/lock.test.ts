@@ -1,20 +1,20 @@
-﻿// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // @gatrix/ripple ??Lock Tests
 // ---------------------------------------------------------------------------
 
 import { DistributedLock } from '../src/lock';
 import { RedisMock } from './helpers/redis-mock';
-import { SilentLogger } from '../src/logger';
+import { createSilentLoggerFactory } from '../src/logger';
 
 describe('DistributedLock', () => {
   let redis: RedisMock;
   let lock: DistributedLock;
-  const logger = new SilentLogger();
+  const silentLoggerFactory = createSilentLoggerFactory();
   const serverId = 'server-test';
 
   beforeEach(() => {
     redis = new RedisMock();
-    lock = new DistributedLock(redis as any, logger);
+    lock = new DistributedLock(redis as any, silentLoggerFactory);
   });
 
   describe('acquire', () => {

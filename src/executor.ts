@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { nanoid } from 'nanoid';
-import { RippleLogger } from './logger';
+import { RippleLogger, RippleLoggerFactory } from './logger';
 import {
   Refreshable,
   RefreshContext,
@@ -33,14 +33,14 @@ export class RefreshExecutor {
   constructor(opts: {
     lock: DistributedLock;
     metrics: RippleMetrics;
-    logger: RippleLogger;
+    createLogger: RippleLoggerFactory;
     serverId: string;
     retryConfig?: Partial<RetryConfig>;
     defaultTimeoutMs?: number;
   }) {
     this.lock = opts.lock;
     this.metrics = opts.metrics;
-    this.logger = opts.logger.child({ module: 'executor' });
+    this.logger = opts.createLogger('executor');
     this.serverId = opts.serverId;
     this.defaultTimeoutMs = opts.defaultTimeoutMs ?? 30000;
     this.retryConfig = { ...DEFAULT_RETRY_CONFIG, ...opts.retryConfig };
@@ -57,11 +57,12 @@ export class RefreshExecutor {
     const startTime = Date.now();
     const timeoutMs = refreshable.timeoutMs ?? this.defaultTimeoutMs;
     const lockId = nanoid();
-    const log = this.logger.child({
+    const log = this.logger;
+    const logCtx = {
       refreshKey: refreshable.key,
       requestId: ctx.requestId,
       trigger: ctx.trigger,
-    });
+    };
 
     // Acquire lock
     const acquired = await this.lock.acquire(
@@ -72,7 +73,7 @@ export class RefreshExecutor {
     );
 
     if (!acquired) {
-      log.warn('Skipped: lock already held (concurrent execution)');
+      log.warn('Skipped: lock already held (concurrent execution)', logCtx);
       return {
         key: refreshable.key,
         status: 'skipped',
@@ -88,6 +89,7 @@ export class RefreshExecutor {
         ctx,
         timeoutMs,
         log,
+        logCtx,
       );
 
       const durationMs = Date.now() - startTime;
@@ -112,6 +114,7 @@ export class RefreshExecutor {
     originalCtx: RefreshContext,
     timeoutMs: number,
     log: RippleLogger,
+    logCtx: Record<string, unknown>,
   ): Promise<RefreshResult> {
     let lastError: Error | undefined;
 
@@ -144,12 +147,13 @@ export class RefreshExecutor {
         // Warn if handler is slow (>50% of timeout)
         if (elapsed > timeoutMs * 0.5) {
           log.warn('Refresh completed but slow (exceeds 50% of timeout)', {
+            ...logCtx,
             ...logFields,
             timeoutMs,
             usagePercent: Math.round((elapsed / timeoutMs) * 100),
           });
         } else {
-          log.info('Refresh completed', logFields);
+          log.info('Refresh completed', { ...logCtx, ...logFields });
         }
 
         return { key: refreshable.key, status: 'success', durationMs: 0 };
@@ -160,6 +164,7 @@ export class RefreshExecutor {
 
         if (isTimeout) {
           log.error('Refresh timed out', {
+            ...logCtx,
             attempt,
             timeoutMs,
             elapsedMs: elapsed,
@@ -173,6 +178,7 @@ export class RefreshExecutor {
         }
 
         log.warn('Refresh failed', {
+          ...logCtx,
           attempt,
           elapsedMs: elapsed,
           error: lastError.message,
@@ -184,6 +190,7 @@ export class RefreshExecutor {
         if (attempt < maxAttempts - 1) {
           const delay = this.calculateDelay(attempt);
           log.debug('Retrying after delay', {
+            ...logCtx,
             delay,
             nextAttempt: attempt + 1,
           });
@@ -193,6 +200,7 @@ export class RefreshExecutor {
     }
 
     log.error('Refresh exhausted all retries', {
+      ...logCtx,
       error: lastError?.message,
       stack: lastError?.stack,
       attempts: maxAttempts,

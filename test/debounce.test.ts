@@ -1,9 +1,9 @@
-﻿// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // @gatrix/ripple ??Debounce Tests
 // ---------------------------------------------------------------------------
 
 import { DebounceManager } from '../src/debounce';
-import { SilentLogger } from '../src/logger';
+import { createSilentLoggerFactory } from '../src/logger';
 import { RippleMetrics } from '../src/metrics';
 import { RefreshEvent } from '../src/types';
 
@@ -21,7 +21,7 @@ describe('DebounceManager', () => {
 
   beforeEach(() => {
     metrics = new RippleMetrics();
-    debounce = new DebounceManager(new SilentLogger(), metrics);
+    debounce = new DebounceManager(createSilentLoggerFactory(), metrics);
     jest.useFakeTimers();
   });
 

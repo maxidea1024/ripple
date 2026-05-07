@@ -1,9 +1,9 @@
-﻿// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // @gatrix/ripple ??Express API Router
 // ---------------------------------------------------------------------------
 
 import { Router, Request, Response } from 'express';
-import { RippleLogger } from './logger';
+import { RippleLoggerFactory } from './logger';
 import { RefreshableRegistry } from './registry';
 import { RefreshPublisher } from './publisher';
 import { RippleMetrics } from './metrics';
@@ -21,10 +21,10 @@ export function createRefreshRouter(opts: {
   registry: RefreshableRegistry;
   publisher: RefreshPublisher;
   metrics: RippleMetrics;
-  logger: RippleLogger;
+  createLogger: RippleLoggerFactory;
 }): Router {
-  const { registry, publisher, metrics, logger } = opts;
-  const log = logger.child({ module: 'api' });
+  const { registry, publisher, metrics, createLogger } = opts;
+  const log = createLogger('api');
   const router = Router();
 
   /**

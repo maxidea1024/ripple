@@ -1,10 +1,10 @@
-﻿// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // @gatrix/ripple ??Refresh Publisher
 // ---------------------------------------------------------------------------
 
 import Redis from 'ioredis';
 import { nanoid } from 'nanoid';
-import { RippleLogger } from './logger';
+import { RippleLogger, RippleLoggerFactory } from './logger';
 import { RefreshEvent, StreamConfig, DEFAULT_STREAM_CONFIG } from './types';
 import { RippleMetrics } from './metrics';
 
@@ -19,12 +19,12 @@ export class RefreshPublisher {
 
   constructor(
     redis: Redis.Redis,
-    logger: RippleLogger,
+    createLogger: RippleLoggerFactory,
     metrics: RippleMetrics,
     streamConfig?: Partial<StreamConfig>,
   ) {
     this.redis = redis;
-    this.logger = logger.child({ module: 'publisher' });
+    this.logger = createLogger('publisher');
     this.metrics = metrics;
     this.streamConfig = { ...DEFAULT_STREAM_CONFIG, ...streamConfig };
   }

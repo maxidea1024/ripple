@@ -3,8 +3,9 @@
 // ---------------------------------------------------------------------------
 
 import Redis from 'ioredis';
+import { hostname } from 'os';
 import { Router } from 'express';
-import { RippleLogger, ConsoleLogger, LogLevel } from './logger';
+import { RippleLogger, RippleLoggerFactory, createConsoleLoggerFactory, LogLevel } from './logger';
 import {
   Refreshable,
   OrchestratorConfig,
@@ -64,13 +65,17 @@ export interface RippleInstance {
  */
 export function createRipple(
   config: OrchestratorConfig,
-  externalLogger?: RippleLogger,
+  loggerFactory?: RippleLoggerFactory,
 ): RippleInstance {
+  // Server identity
+  const serverId =
+    config.serverId ?? `${hostname()}-${process.pid}`;
+
   // Logger
-  const logger =
-    externalLogger ??
-    new ConsoleLogger((config.logLevel as LogLevel) ?? 'info');
-  const log = logger.child({ module: 'ripple' });
+  const createLogger: RippleLoggerFactory =
+    loggerFactory ??
+    createConsoleLoggerFactory((config.logLevel as LogLevel) ?? 'info');
+  const log = createLogger('ripple');
 
   // Redis connections (two separate: one for commands, one for blocking reads)
   const redisOpts: Redis.RedisOptions = {
@@ -89,37 +94,37 @@ export function createRipple(
   // Core components
   const metrics = new RippleMetrics();
   const registry = new RefreshableRegistry();
-  const lock = new DistributedLock(commandRedis, logger);
-  const dedupeChecker = new DedupeChecker(commandRedis, logger);
-  const debounceManager = new DebounceManager(logger, metrics);
+  const lock = new DistributedLock(commandRedis, createLogger);
+  const dedupeChecker = new DedupeChecker(commandRedis, createLogger);
+  const debounceManager = new DebounceManager(createLogger, metrics);
 
   const executor = new RefreshExecutor({
     lock,
     metrics,
-    logger,
-    serverId: config.serverId,
+    createLogger,
+    serverId,
     retryConfig: config.retry,
     defaultTimeoutMs: config.defaultTimeoutMs,
   });
 
-  const bootstrapLoader = new BootstrapLoader(registry, executor, logger);
+  const bootstrapLoader = new BootstrapLoader(registry, executor, createLogger);
 
   const publisher = new RefreshPublisher(
     commandRedis,
-    logger,
+    createLogger,
     metrics,
     config.stream,
   );
 
   const consumer = new StreamConsumer({
     redis: subscriberRedis,
-    logger,
+    createLogger,
     registry,
     executor,
     dedupe: dedupeChecker,
     debounce: debounceManager,
     metrics,
-    serverId: config.serverId,
+    serverId,
     streamConfig: config.stream,
     consumerConfig: config.consumer,
     dedupeConfig: config.dedupe,
@@ -153,7 +158,7 @@ export function createRipple(
       log.info('Redis connected');
 
       // Verify Redis version (5.0+ required for Streams)
-      await verifyRedisVersion(commandRedis, log);
+      await verifyRedisVersion(commandRedis, createLogger('version-check'));
 
       // Validate dependency graph
       registry.validateDependencies();
@@ -207,7 +212,7 @@ export function createRipple(
         registry,
         publisher,
         metrics,
-        logger,
+        createLogger,
       });
     },
   };

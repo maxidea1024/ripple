@@ -1,4 +1,4 @@
-﻿// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // @gatrix/ripple ??Bootstrap Tests
 // ---------------------------------------------------------------------------
 
@@ -7,7 +7,7 @@ import { RefreshExecutor } from '../src/executor';
 import { RefreshableRegistry } from '../src/registry';
 import { DistributedLock } from '../src/lock';
 import { RippleMetrics } from '../src/metrics';
-import { SilentLogger } from '../src/logger';
+import { createSilentLoggerFactory } from '../src/logger';
 import { RedisMock } from './helpers/redis-mock';
 import { Refreshable, RefreshContext } from '../src/types';
 
@@ -28,22 +28,22 @@ describe('BootstrapLoader', () => {
   let registry: RefreshableRegistry;
   let executor: RefreshExecutor;
   let bootstrap: BootstrapLoader;
-  const logger = new SilentLogger();
+  const silentLoggerFactory = createSilentLoggerFactory();
 
   beforeEach(() => {
     redis = new RedisMock();
     registry = new RefreshableRegistry();
-    const lock = new DistributedLock(redis as any, logger);
+    const lock = new DistributedLock(redis as any, silentLoggerFactory);
     const metrics = new RippleMetrics();
     executor = new RefreshExecutor({
       lock,
       metrics,
-      logger,
+      createLogger: silentLoggerFactory,
       serverId: 'server-test',
       retryConfig: { maxRetries: 0, retryDelayMs: 0, exponentialBackoff: false, maxDelayMs: 0 },
       defaultTimeoutMs: 5000,
     });
-    bootstrap = new BootstrapLoader(registry, executor, logger);
+    bootstrap = new BootstrapLoader(registry, executor, silentLoggerFactory);
   });
 
   it('should execute all refreshables with trigger "bootstrap"', async () => {

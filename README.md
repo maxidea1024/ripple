@@ -104,25 +104,75 @@ Every server instance creates its own Consumer Group on a shared Redis Stream. W
 | Bootstrap Preload | Parallel execution | Load all data at server startup |
 | Metrics | prom-client | Prometheus histograms, counters, gauges |
 
+## How Data Flows
+
+![data-flow-overview](docs/data-flow-overview.png)
+
+**Ripple does NOT store or transfer your data.** It only tells servers **when** to reload. Your actual data lives in an external data store — database, Redis, S3, or any other source of truth.
+
+The pattern is simple:
+
+1. **Designer/admin updates data** in the admin tool
+2. **Admin tool writes to the data store** (DB, Redis, S3, etc.)
+3. **Admin tool calls** `POST /ripple/refresh` to notify servers
+4. **Each server's handler fetches the latest data** from the data store
+
+```typescript
+ripple.register({
+  key: 'item-table',
+  refresh: async (ctx) => {
+    // Ripple doesn't pass data — your handler fetches it from the source
+    const items = await db.query('SELECT * FROM items WHERE active = true');
+    ItemCache.replace(items);
+    console.log(`Reloaded ${items.length} items (trigger: ${ctx.trigger})`);
+  },
+});
+
+ripple.register({
+  key: 'event-config',
+  refresh: async (ctx) => {
+    // Can fetch from any source: DB, Redis, S3, HTTP API, file system...
+    const config = await redis.get('event:current:config');
+    EventManager.reload(JSON.parse(config));
+  },
+});
+```
+
+### Exposing the Refresh API
+
+By mounting Ripple's built-in Express router on every game server, you get a uniform `/ripple/refresh` endpoint across your entire fleet:
+
+```typescript
+// Every game server exposes the same endpoint
+app.use('/ripple', ripple.createRouter());
+
+// Now any of these will broadcast to ALL servers:
+// POST http://game-server-a:3000/ripple/refresh  {"pattern": "item-table"}
+// POST http://game-server-b:3000/ripple/refresh  {"pattern": "**"}
+// It doesn't matter which server you call — they all share the same Redis Stream.
+```
+
+> **Security note:** The refresh API only triggers a **reload from your existing data store**. It doesn't accept or inject any data payload. The worst an attacker can do is cause an unnecessary reload — equivalent to a server restart. For production, restrict access via internal network rules or a simple API key middleware, not complex auth.
+
 ## Quick Start
 
 ```typescript
 import { createRipple } from '@gatrix/ripple';
 
 const ripple = createRipple({
-  serverId: `lobbyd-${hostname()}`,
   redis: { host: 'redis.internal', port: 6379 },
 });
 
+// Register handler — fetches fresh data from YOUR data store
 ripple.register({
   key: 'item-table',
   refresh: async (ctx) => {
-    // reload item data from database
     const items = await db.query('SELECT * FROM items');
-    itemCache.replace(items);
+    ItemCache.replace(items);
   },
 });
 
+// Start listening + mount API
 await ripple.start();
 app.use('/ripple', ripple.createRouter());
 ```

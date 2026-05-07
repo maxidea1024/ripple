@@ -104,24 +104,75 @@ Redis Streams는 Redis 5.0에서 도입되었습니다. 5.0 미만 버전(예: W
 | 부트스트랩 | 병렬 실행 | 서버 시작 시 모든 데이터 프리로드 |
 | 메트릭 | prom-client | Prometheus 히스토그램, 카운터, 게이지 |
 
+## 데이터 흐름
+
+![data-flow-overview](docs/data-flow-overview.png)
+
+**Ripple은 데이터를 저장하거나 전송하지 않습니다.** 서버에 **언제** 리로드할지만 알려줍니다. 실제 데이터는 외부 데이터 저장소(데이터베이스, Redis, S3 등)에 존재합니다.
+
+패턴은 간단합니다:
+
+1. **기획자/운영자가 어드민 도구에서 데이터 수정**
+2. **어드민 도구가 데이터 저장소에 기록** (DB, Redis, S3 등)
+3. **어드민 도구가** `POST /ripple/refresh` **호출**하여 서버에 통지
+4. **각 서버의 핸들러가 데이터 저장소에서 최신 데이터를 가져옴**
+
+```typescript
+ripple.register({
+  key: 'item-table',
+  refresh: async (ctx) => {
+    // Ripple은 데이터를 전달하지 않음 — 핸들러가 소스에서 직접 가져옴
+    const items = await db.query('SELECT * FROM items WHERE active = true');
+    ItemCache.replace(items);
+    console.log(`${items.length}개 아이템 리로드 (trigger: ${ctx.trigger})`);
+  },
+});
+
+ripple.register({
+  key: 'event-config',
+  refresh: async (ctx) => {
+    // DB, Redis, S3, HTTP API, 파일 시스템 등 어떤 소스에서든 가져올 수 있음
+    const config = await redis.get('event:current:config');
+    EventManager.reload(JSON.parse(config));
+  },
+});
+```
+
+### Refresh API 노출
+
+모든 게임 서버에 Ripple의 내장 Express 라우터를 마운트하면, 전체 서버 플릿에 걸쳐 동일한 `/ripple/refresh` 엔드포인트가 노출됩니다:
+
+```typescript
+// 모든 게임 서버가 동일한 엔드포인트를 노출
+app.use('/ripple', ripple.createRouter());
+
+// 이제 아무 서버에나 호출하면 전체 서버로 브로드캐스트:
+// POST http://game-server-a:3000/ripple/refresh  {"pattern": "item-table"}
+// POST http://game-server-b:3000/ripple/refresh  {"pattern": "**"}
+// 어떤 서버를 호출하든 상관없음 — 모두 같은 Redis Stream을 공유합니다.
+```
+
+> **보안 참고:** Refresh API는 **기존 데이터 저장소에서 리로드**를 트리거할 뿐입니다. 데이터 페이로드를 받거나 주입하지 않습니다. 공격자가 할 수 있는 최악의 일은 불필요한 리로드를 유발하는 것뿐 — 서버 재시작과 동등합니다. 프로덕션에서는 내부 네트워크 규칙이나 간단한 API 키 미들웨어로 접근을 제한하세요.
+
 ## 빠른 시작
 
 ```typescript
 import { createRipple } from '@gatrix/ripple';
 
 const ripple = createRipple({
-  serverId: `lobbyd-${hostname()}`,
   redis: { host: 'redis.internal', port: 6379 },
 });
 
+// 핸들러 등록 — 데이터 저장소에서 최신 데이터를 가져옴
 ripple.register({
   key: 'item-table',
   refresh: async (ctx) => {
     const items = await db.query('SELECT * FROM items');
-    itemCache.replace(items);
+    ItemCache.replace(items);
   },
 });
 
+// 리스닝 시작 + API 마운트
 await ripple.start();
 app.use('/ripple', ripple.createRouter());
 ```

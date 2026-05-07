@@ -2,6 +2,16 @@
 
 분산 리프레시 오케스트레이터 - Redis Streams를 통해 모든 게임 서버 인스턴스에 리프레시 이벤트를 브로드캐스트합니다.
 
+## 요구 사항
+
+| 의존성 | 최소 버전 | 필요 명령어 |
+|--------|----------|------------|
+| **Redis** | **5.0+** | `XADD`, `XREADGROUP`, `XACK`, `XGROUP`, `XPENDING`, `XCLAIM` (Streams) |
+| Node.js | 16+ | - |
+| ioredis | 4+ | - |
+
+Redis Streams는 Redis 5.0에서 도입되었습니다. 5.0 미만 버전(예: Windows 포트 3.0.504)에서는 Consumer 시작 시 `ERR unknown command 'xgroup'` 오류가 발생합니다.
+
 ## 아키텍처
 
 ![architecture](docs/architecture.png)

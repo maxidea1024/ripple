@@ -2,6 +2,16 @@
 
 Distributed Refresh Orchestrator - broadcast refresh events across all game server instances via Redis Streams.
 
+## Prerequisites
+
+| Dependency | Minimum Version | Required Commands |
+|------------|----------------|-------------------|
+| **Redis** | **5.0+** | `XADD`, `XREADGROUP`, `XACK`, `XGROUP`, `XPENDING`, `XCLAIM` (Streams) |
+| Node.js | 16+ | - |
+| ioredis | 4+ | - |
+
+Redis Streams were introduced in Redis 5.0. Versions below 5.0 (e.g. the Windows port 3.0.504) will fail at consumer startup with `ERR unknown command 'xgroup'`.
+
 ## Architecture
 
 ![architecture](docs/architecture.png)

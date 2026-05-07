@@ -648,6 +648,332 @@ ripple.register({
 
 ---
 
+## 라이브 서비스 운영 가이드
+
+라이브 서비스 환경에서 ripple을 운영할 때 반드시 고려해야 할 사항들을 다룹니다.
+
+---
+
+### 1. Redis 인프라
+
+#### 전용 Redis 인스턴스 사용
+
+Ripple은 게임의 주요 캐시/세션 Redis와 **별도의 전용 인스턴스**(또는 최소한 별도의 DB 인덱스)를 사용해야 합니다. 이유:
+
+- Stream 데이터가 시간이 지남에 따라 누적되어 메모리를 소비합니다
+- `XREADGROUP BLOCK`이 연결을 점유하여 `maxclients`에 영향을 줍니다
+- 게임 핵심 캐시 작업에 간섭을 방지합니다
+
+```typescript
+const ripple = createRipple({
+  serverId: 'lobbyd-1',
+  redis: {
+    host: 'redis-ripple.internal',  // 전용 인스턴스
+    port: 6379,
+    db: 0,
+  },
+});
+```
+
+#### Redis 영속성 (Persistence)
+
+Redis가 영속성(`RDB` 또는 `AOF`) 없이 재시작되면 **모든 Stream 데이터와 Consumer Group 상태가 소실**됩니다:
+
+- 처리되지 않은 (pending) 메시지가 영구적으로 유실됩니다
+- Consumer Group이 재생성되어야 합니다 (ripple이 자동으로 처리)
+- 다운타임 중 발행된 이벤트의 재전송이 불가합니다
+
+**권장:** ripple Redis 인스턴스에 최소한 `RDB` 스냅샷을 활성화하세요. `AOF`의 `everysec` 설정은 약간의 성능 비용으로 더 강력한 내구성을 제공합니다.
+
+#### Redis Cluster / Sentinel
+
+Ripple은 단일 Redis 연결을 사용합니다. 고가용성이 필요한 경우:
+
+- **Redis Sentinel:** ioredis가 Sentinel을 기본 지원합니다. `redis.options`를 통해 Sentinel 설정을 전달합니다.
+- **Redis Cluster:** 권장하지 않습니다. Streams와 Consumer Group은 단일 키에서 동작하므로 샤딩의 이점이 없습니다. Cluster는 이 용도에서 복잡성만 증가시킵니다.
+
+```typescript
+// Sentinel 예제
+const ripple = createRipple({
+  serverId: 'lobbyd-1',
+  redis: {
+    host: 'sentinel-host',
+    port: 26379,
+    options: {
+      sentinels: [
+        { host: 'sentinel-1', port: 26379 },
+        { host: 'sentinel-2', port: 26379 },
+        { host: 'sentinel-3', port: 26379 },
+      ],
+      name: 'ripple-master',
+    },
+  },
+});
+```
+
+---
+
+### 2. Stream 메모리 관리
+
+Redis Stream은 트리밍하지 않으면 무한정 커집니다. 라이브 서비스에서 **결국 OOM을 유발합니다**.
+
+#### 자동 트리밍 (권장)
+
+`stream.maxLen`을 설정하여 Stream 크기를 제한합니다:
+
+```typescript
+const ripple = createRipple({
+  // ...
+  stream: {
+    key: 'ripple:refresh',
+    maxLen: 10000,  // 최근 10,000개 엔트리 유지 (근사값)
+  },
+});
+```
+
+`maxLen`이 설정되면 모든 `XADD`에 `MAXLEN ~10000`이 포함되어 오래된 엔트리를 근사적으로 트리밍합니다.
+
+#### maxLen 산정 기준
+
+이벤트 발생률을 기반으로 계산합니다:
+
+```
+maxLen = (초당 이벤트 수) * (크래시 복구에 허용되는 최대 재생 시간(초))
+
+예시:
+  - 평균 2 events/sec, 피크 10 events/sec
+  - 1시간 재생 윈도우 허용
+  - maxLen = 10 * 3600 = 36000
+```
+
+`maxLen`이 너무 작으면 크래시 복구 서버가 이미 트리밍된 이벤트를 놓칠 수 있습니다. 부트스트랩이 모든 데이터를 재초기화하므로 일반적으로 허용됩니다.
+
+#### Stream 크기 모니터링
+
+```bash
+# Stream 길이 및 메모리 사용량 확인
+redis-cli XLEN ripple:refresh
+redis-cli MEMORY USAGE ripple:refresh
+redis-cli XINFO STREAM ripple:refresh
+```
+
+---
+
+### 3. Consumer Group 생명주기
+
+#### 고아 Consumer Group
+
+서버 인스턴스가 영구적으로 폐기(재시작이 아닌 제거)되면 해당 Consumer Group이 Redis에 남습니다. 고아 그룹은:
+
+- Pending 메시지가 있으면 Redis가 오래된 엔트리를 트리밍하는 것을 방해합니다
+- 메모리를 낭비하고 `XINFO GROUPS` 출력을 복잡하게 만듭니다
+
+**정리 절차:**
+
+```bash
+# 모든 Consumer Group 조회
+redis-cli XINFO GROUPS ripple:refresh
+
+# 고아 그룹 삭제 (더 이상 존재하지 않는 서버)
+redis-cli XGROUP DESTROY ripple:refresh "group:lobbyd-old-instance"
+```
+
+**권장:** 주기적인 정리 작업(예: 주간 cron)을 실행하여 활성 서버 ID와 Consumer Group을 비교하고 오래된 것을 제거하세요.
+
+#### 서버 재시작 동작
+
+동일한 `serverId`로 서버가 재시작되면:
+
+1. 기존 Consumer Group이 재사용됩니다 (재생성되지 않음)
+2. 이전 실행에서 ACK되지 않은 pending 메시지가 재처리됩니다
+3. 이를 통해 재시작 시에도 **at-least-once** 전달 보장이 유지됩니다
+
+이는 설계된 동작입니다. 핸들러가 **멱등성(idempotent)**을 갖추어야 합니다 (아래 참조).
+
+---
+
+### 4. 핸들러 구현 규칙
+
+#### 핸들러는 반드시 멱등(Idempotent)해야 합니다
+
+Ripple은 **at-least-once** 전달을 보장합니다. 동일한 이벤트가 다음 이유로 두 번 이상 처리될 수 있습니다:
+
+- ACK 전 서버 크래시
+- Redis와의 네트워크 파티션
+- `XCLAIM`에 의한 pending 메시지 복구
+
+**나쁜 예 (멱등하지 않음):**
+```typescript
+refresh: async (ctx) => {
+  // 매번 리스트에 추가 - 중복 실행 시 데이터 증식
+  const items = await db.query('SELECT * FROM items');
+  existingItems.push(...items);
+}
+```
+
+**좋은 예 (멱등):**
+```typescript
+refresh: async (ctx) => {
+  // 전체 교체 - 여러 번 실행해도 안전
+  const items = await db.query('SELECT * FROM items');
+  itemCache.replaceAll(items);
+}
+```
+
+#### 핸들러는 무한 블로킹하면 안 됩니다
+
+모든 핸들러에는 타임아웃(`defaultTimeoutMs` 또는 핸들러별 `timeoutMs`)이 있습니다. 타임아웃 초과 시:
+
+- 핸들러가 **강제 종료**됩니다 (Promise race 패배)
+- 결과가 `timeout`으로 보고됩니다
+- 하지만 내부 비동기 작업(DB 쿼리, HTTP 호출)은 계속 실행될 수 있습니다
+
+**중요:** 데이터 소스(DB, HTTP API)의 자체 타임아웃을 ripple 핸들러 타임아웃보다 **낮게** 설정하세요:
+
+```typescript
+{
+  key: 'item-table',
+  timeoutMs: 10000,  // Ripple 타임아웃: 10초
+  refresh: async (ctx) => {
+    // DB 쿼리 타임아웃은 10초 미만이어야 함
+    const items = await db.query('SELECT * FROM items', { timeout: 8000 });
+    itemCache.replaceAll(items);
+  },
+}
+```
+
+#### 예상된 에러는 throw하지 마세요
+
+핸들러 내에서 throw하면 재시도 메커니즘이 작동합니다. 알려진 비일시적 조건(예: "테이블이 존재하지 않음")이면 재시도가 낭비입니다. 내부에서 catch하고 로그하세요:
+
+```typescript
+refresh: async (ctx) => {
+  try {
+    const data = await loadData();
+    cache.replaceAll(data);
+  } catch (err) {
+    if (isNonTransient(err)) {
+      logger.error('비일시적 에러, 재시도 건너뜀', err);
+      return; // throw하지 않음 - 재시도 방지
+    }
+    throw err; // 일시적 에러 - 재시도 허용
+  }
+}
+```
+
+---
+
+### 5. 네트워크 및 재연결
+
+#### Redis 연결 유실
+
+ioredis는 Redis 연결이 끊기면 자동으로 재연결합니다. 재연결 중:
+
+- Consumer의 `XREADGROUP BLOCK` 호출이 실패합니다
+- Consumer 루프가 다음 폴링 사이클에서 재시도합니다
+- 발행된 이벤트는 ioredis가 큐잉하고 재연결 후 전송합니다
+
+짧은 네트워크 중단 시 이벤트 유실은 없지만, **장시간 장애**(`claimMinIdleMs` 초과)는 다른 서버가 이 서버의 pending 메시지를 claim할 수 있습니다.
+
+#### 멀티 데이터센터 배포
+
+게임 서버가 여러 데이터센터에 걸쳐 있으면서 하나의 Redis를 공유하는 경우:
+
+- 네트워크 지연이 `XREADGROUP BLOCK` 응답성에 영향을 줍니다
+- 데이터센터별 Redis 인스턴스에 별도의 ripple Stream을 배포하는 것을 고려하세요
+- 또는 단일 프라이머리로 Redis 레플리케이션을 사용하세요
+
+---
+
+### 6. 모니터링 및 알림
+
+#### 핵심 모니터링 지표
+
+Ripple은 `prom-client`를 통해 Prometheus 지표를 노출합니다. 필수 알림:
+
+| 지표 | 알림 조건 | 의미 |
+|------|----------|------|
+| `ripple_refresh_total{status="failure"}` | Rate > 0 지속 | 핸들러가 모든 재시도 후에도 실패 |
+| `ripple_refresh_total{status="timeout"}` | Rate > 0 지속 | 핸들러가 너무 느림 |
+| `ripple_running_count` | 수 분간 > 0 고정 | 핸들러가 행(hang) 상태일 수 있음 |
+| `ripple_publish_total` | 갑자기 0으로 감소 | Publisher 연결 끊김 가능성 |
+| Stream lag (XPENDING count) | 시간 경과에 따라 증가 | Consumer가 처리 속도를 따라가지 못함 |
+
+#### Consumer 상태 확인
+
+```bash
+# Consumer Group별 미처리 메시지 수
+redis-cli XPENDING ripple:refresh "group:lobbyd-1" - + 10
+
+# 각 Consumer의 지연 상태 확인
+redis-cli XINFO GROUPS ripple:refresh
+# "lag" 필드 확인 (Redis 7.0+)
+```
+
+#### 주시해야 할 로그 패턴
+
+| 로그 메시지 | 심각도 | 조치 |
+|-------------|--------|------|
+| `Refresh exhausted all retries` | ERROR | 핸들러가 고장 - 근본 원인 조사 필요 |
+| `Refresh timed out` | ERROR | 핸들러 너무 느림 - 타임아웃 증가 또는 최적화 |
+| `Refresh completed but slow` | WARN | 핸들러가 타임아웃에 근접 - 사전 최적화 필요 |
+| `Skipped: lock already held` | WARN | 동시 실행 감지 - 다중 발행 시나리오에서 정상 |
+
+---
+
+### 7. 확장 고려사항
+
+#### 핸들러 수
+
+등록 핸들러 수에 하드 제한은 없지만 다음을 고려하세요:
+
+- 부트스트랩은 의존성 순서로 계층화하여 동시성 제한(`bootstrap.concurrency`, 기본 10)으로 실행합니다
+- 모든 refresh 이벤트가 등록된 전체 핸들러에 대해 패턴 매칭을 수행합니다
+- 핸들러가 많으면 부트스트랩 시간이 길어집니다
+
+**권장:** 핸들러 수를 관리 가능한 수준(50개 미만)으로 유지하세요. 테이블마다 하나씩 만들지 말고 관련 데이터를 단일 핸들러로 그룹화하세요.
+
+#### 이벤트 발행 속도
+
+Ripple은 Consumer당 순차적으로 이벤트를 처리합니다(한 번의 `XREADGROUP` 폴링에 `batchSize`개의 엔트리). 높은 발행 속도에서:
+
+- `consumer.batchSize`를 증가시켜 폴링당 더 많은 이벤트를 처리하세요
+- 자주 트리거되는 핸들러에 `debounceMs`를 사용하여 빠른 이벤트를 통합하세요
+- XPENDING count를 모니터링하여 Consumer의 처리 지연을 감지하세요
+
+#### 여러 서버 유형
+
+서로 다른 서버 유형(로비, 게임, 매치)이 다른 리프레시 세트를 필요로 하면, 별도의 Stream 키를 사용하세요:
+
+```typescript
+// 로비 서버
+createRipple({ stream: { key: 'ripple:lobby' }, ... });
+
+// 게임 서버
+createRipple({ stream: { key: 'ripple:game' }, ... });
+```
+
+이렇게 하면 게임 서버가 로비 전용 이벤트를 수신하는 것을 방지하고 그 반대도 방지합니다.
+
+---
+
+### 8. 흔한 실수 목록
+
+| 실수 | 증상 | 해결 |
+|------|------|------|
+| Redis < 5.0 | 시작 시 `ERR unknown command 'xgroup'` | Redis를 5.0+로 업그레이드 |
+| 인스턴스 간 동일한 `serverId` | 하나의 인스턴스만 이벤트 처리 | 프로세스당 고유한 `serverId` 사용 (예: 호스트명 + PID) |
+| 핸들러가 동기화 없이 공유 가변 상태를 수정 | 레이스 컨디션, 손상된 캐시 | 전체 교체 패턴 사용, 점진적 업데이트 금지 |
+| `maxLen` 미설정 | 수주/수개월 후 Redis OOM | `stream.maxLen`을 적절한 값으로 설정 |
+| `defaultTimeoutMs` 너무 낮음 | 정상 동작 중 핸들러 강제 종료 | 예상 핸들러 소요 시간의 2-3배로 설정 |
+| `defaultTimeoutMs` 너무 높음 | 느린 핸들러가 분산 잠금을 오래 점유 | 60초 미만 유지; 느린 핸들러 최적화 |
+| `claimMinIdleMs` < 실제 핸들러 실행 시간 | 아직 처리 중인 메시지가 claim됨 | `claimMinIdleMs` > `defaultTimeoutMs` + `maxRetries * maxDelayMs` |
+| 멱등하지 않은 핸들러 | 재시도/크래시 복구 시 데이터 중복 | 항상 전체 교체, 점진적 추가 금지 |
+| 프로덕션에서 Bootstrap `failFast: true` | 하나의 핸들러 오류로 전체 서버 시작 차단 | 프로덕션에서는 `failFast: false`, 개발에서만 `true` |
+| 고아 Consumer Group | Stream 메모리 무한 증가 | 폐기된 서버의 그룹을 주기적으로 정리 |
+
+---
+
 ## 게임 서버 배포
 
 ```bash

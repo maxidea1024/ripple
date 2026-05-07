@@ -652,6 +652,332 @@ When set, multiple refresh events for this handler within the debounce window ar
 
 ---
 
+## Production Operation Guide
+
+This section covers critical considerations for running ripple in a live service environment.
+
+---
+
+### 1. Redis Infrastructure
+
+#### Dedicated Redis Instance
+
+Ripple should use a **dedicated Redis instance** (or at least a dedicated DB index) separate from your game's primary cache/session Redis. Reasons:
+
+- Stream data accumulates over time and consumes memory
+- `XREADGROUP BLOCK` holds a connection open, which counts against `maxclients`
+- Avoid interference with game-critical cache operations
+
+```typescript
+const ripple = createRipple({
+  serverId: 'lobbyd-1',
+  redis: {
+    host: 'redis-ripple.internal',  // Dedicated instance
+    port: 6379,
+    db: 0,
+  },
+});
+```
+
+#### Redis Persistence
+
+If Redis restarts without persistence (`RDB` or `AOF`), **all Stream data and consumer group state is lost**. This means:
+
+- Pending (unprocessed) messages are permanently lost
+- Consumer groups must be recreated (ripple handles this automatically)
+- No re-delivery of events published during downtime
+
+**Recommendation:** Enable at least `RDB` snapshots on the ripple Redis instance. `AOF` with `everysec` provides stronger durability at a small performance cost.
+
+#### Redis Cluster / Sentinel
+
+Ripple currently uses a single Redis connection. If you need high availability:
+
+- **Redis Sentinel:** ioredis supports Sentinel natively. Pass Sentinel config via `redis.options`.
+- **Redis Cluster:** Not recommended. Streams and consumer groups operate on a single key, so there is no benefit from sharding. Cluster adds complexity without value for this use case.
+
+```typescript
+// Sentinel example
+const ripple = createRipple({
+  serverId: 'lobbyd-1',
+  redis: {
+    host: 'sentinel-host',
+    port: 26379,
+    options: {
+      sentinels: [
+        { host: 'sentinel-1', port: 26379 },
+        { host: 'sentinel-2', port: 26379 },
+        { host: 'sentinel-3', port: 26379 },
+      ],
+      name: 'ripple-master',
+    },
+  },
+});
+```
+
+---
+
+### 2. Stream Memory Management
+
+Redis Streams grow indefinitely unless trimmed. In a live service, this **will** eventually cause OOM.
+
+#### Automatic Trimming (Recommended)
+
+Configure `stream.maxLen` to cap the stream size:
+
+```typescript
+const ripple = createRipple({
+  // ...
+  stream: {
+    key: 'ripple:refresh',
+    maxLen: 10000,  // Keep last 10,000 entries (~approximate)
+  },
+});
+```
+
+With `maxLen` set, every `XADD` includes `MAXLEN ~10000`, which trims old entries approximately. Redis uses `~` (approximate) trimming internally for performance.
+
+#### Sizing `maxLen`
+
+Calculate based on your event rate:
+
+```
+maxLen = (events per second) * (maximum acceptable replay window in seconds)
+
+Example:
+  - 2 events/second average, 10 events/second peak
+  - Want 1 hour replay window for crash recovery
+  - maxLen = 10 * 3600 = 36000
+```
+
+If `maxLen` is too small, crash-recovered servers may miss events that were already trimmed. This is acceptable if bootstrap re-initializes all data anyway.
+
+#### Monitoring Stream Size
+
+```bash
+# Check stream length and memory usage
+redis-cli XLEN ripple:refresh
+redis-cli MEMORY USAGE ripple:refresh
+redis-cli XINFO STREAM ripple:refresh
+```
+
+---
+
+### 3. Consumer Group Lifecycle
+
+#### Orphaned Consumer Groups
+
+When a server instance is permanently decommissioned (removed, not just restarted), its consumer group remains in Redis. These orphaned groups:
+
+- Prevent Redis from trimming old entries (if they have pending messages)
+- Waste memory and clutter `XINFO GROUPS` output
+
+**Cleanup procedure:**
+
+```bash
+# List all consumer groups
+redis-cli XINFO GROUPS ripple:refresh
+
+# Delete orphaned group (server no longer exists)
+redis-cli XGROUP DESTROY ripple:refresh "group:lobbyd-old-instance"
+```
+
+**Recommendation:** Run a periodic cleanup job (e.g., weekly cron) that compares active server IDs against consumer groups and removes stale ones.
+
+#### Server Restart Behavior
+
+When a server restarts with the same `serverId`:
+
+1. The existing consumer group is reused (not recreated)
+2. Any pending (unACK'd) messages from the previous run are reprocessed
+3. This provides **at-least-once** delivery guarantee across restarts
+
+This is by design. Ensure your handlers are **idempotent** (see below).
+
+---
+
+### 4. Handler Implementation Rules
+
+#### Handlers MUST Be Idempotent
+
+Ripple guarantees **at-least-once** delivery. The same event may be processed more than once due to:
+
+- Server crash before ACK
+- Network partition with Redis
+- `XCLAIM` recovering pending messages
+
+**Bad (not idempotent):**
+```typescript
+refresh: async (ctx) => {
+  // Appends to a list every time - duplicates cause data growth
+  const items = await db.query('SELECT * FROM items');
+  existingItems.push(...items);
+}
+```
+
+**Good (idempotent):**
+```typescript
+refresh: async (ctx) => {
+  // Full replacement - safe to execute multiple times
+  const items = await db.query('SELECT * FROM items');
+  itemCache.replaceAll(items);
+}
+```
+
+#### Handlers MUST NOT Block Indefinitely
+
+Every handler has a timeout (`defaultTimeoutMs` or per-handler `timeoutMs`). If a handler exceeds this timeout:
+
+- It is **killed** (the Promise race is lost)
+- The result is reported as `timeout`
+- But the underlying async operation (DB query, HTTP call) may still be running
+
+**Critical:** Ensure your data sources (DB, HTTP APIs) have their own timeouts set **lower** than ripple's handler timeout:
+
+```typescript
+{
+  key: 'item-table',
+  timeoutMs: 10000,  // Ripple timeout: 10s
+  refresh: async (ctx) => {
+    // DB query timeout should be < 10s
+    const items = await db.query('SELECT * FROM items', { timeout: 8000 });
+    itemCache.replaceAll(items);
+  },
+}
+```
+
+#### Handlers Should Not Throw Expected Errors
+
+Throwing inside a handler triggers the retry mechanism. If the error is a known, non-transient condition (e.g., "table does not exist"), retrying is wasteful. Catch and log these internally:
+
+```typescript
+refresh: async (ctx) => {
+  try {
+    const data = await loadData();
+    cache.replaceAll(data);
+  } catch (err) {
+    if (isNonTransient(err)) {
+      logger.error('Non-transient error, skipping retry', err);
+      return; // Do not throw - prevents retry
+    }
+    throw err; // Transient error - allow retry
+  }
+}
+```
+
+---
+
+### 5. Network and Reconnection
+
+#### Redis Connection Loss
+
+ioredis automatically reconnects when the Redis connection drops. During reconnection:
+
+- The consumer's `XREADGROUP BLOCK` call fails
+- The consumer loop retries on the next poll cycle
+- Published events are queued by ioredis and sent after reconnection
+
+No events are lost during brief network interruptions, but **extended outages** (longer than `claimMinIdleMs`) may cause other servers to claim this server's pending messages.
+
+#### Cross-Datacenter Deployment
+
+If game servers span multiple datacenters but share one Redis instance:
+
+- Network latency affects `XREADGROUP BLOCK` responsiveness
+- Consider deploying a Redis instance per datacenter with separate ripple streams
+- Or use Redis replication with a single primary
+
+---
+
+### 6. Monitoring and Alerting
+
+#### Key Metrics to Monitor
+
+Ripple exposes Prometheus metrics via `prom-client`. Essential alerts:
+
+| Metric | Alert Condition | Meaning |
+|--------|----------------|---------|
+| `ripple_refresh_total{status="failure"}` | Rate > 0 sustained | Handlers are failing after all retries |
+| `ripple_refresh_total{status="timeout"}` | Rate > 0 sustained | Handlers are too slow |
+| `ripple_running_count` | Value stuck > 0 for minutes | Handler may be hanging |
+| `ripple_publish_total` | Sudden drop to 0 | Publisher may be disconnected |
+| Stream lag (XPENDING count) | Growing over time | Consumer falling behind |
+
+#### Checking Consumer Health
+
+```bash
+# How many unprocessed messages per consumer group?
+redis-cli XPENDING ripple:refresh "group:lobbyd-1" - + 10
+
+# How far behind is each consumer?
+redis-cli XINFO GROUPS ripple:refresh
+# Check "lag" field (Redis 7.0+)
+```
+
+#### Log Patterns to Watch
+
+| Log Message | Severity | Action |
+|-------------|----------|--------|
+| `Refresh exhausted all retries` | ERROR | Handler is broken - investigate root cause |
+| `Refresh timed out` | ERROR | Handler too slow - increase timeout or optimize |
+| `Refresh completed but slow` | WARN | Handler approaching timeout - optimize proactively |
+| `Skipped: lock already held` | WARN | Concurrent execution detected - normal in multi-publish scenarios |
+
+---
+
+### 7. Scaling Considerations
+
+#### Number of Handlers
+
+There is no hard limit on registered handlers, but consider:
+
+- Bootstrap runs handlers in dependency-ordered layers with concurrency limits (`bootstrap.concurrency`, default 10)
+- Each refresh event triggers pattern matching against ALL registered handlers
+- More handlers = longer bootstrap time
+
+**Recommendation:** Keep handlers at a manageable count (< 50). Group related data into single handlers rather than creating one per table.
+
+#### Event Publish Rate
+
+Ripple processes events sequentially per consumer (one `XREADGROUP` poll at a time, `batchSize` entries per poll). Under high publish rates:
+
+- Increase `consumer.batchSize` to process more events per poll cycle
+- Use `debounceMs` on frequently-triggered handlers to coalesce rapid events
+- Monitor XPENDING count to detect consumer falling behind
+
+#### Multiple Server Types
+
+If different server types (lobby, game, match) need different refresh sets, use separate stream keys:
+
+```typescript
+// Lobby servers
+createRipple({ stream: { key: 'ripple:lobby' }, ... });
+
+// Game servers
+createRipple({ stream: { key: 'ripple:game' }, ... });
+```
+
+This prevents game servers from receiving lobby-only events and vice versa.
+
+---
+
+### 8. Common Pitfalls
+
+| Pitfall | Symptom | Solution |
+|---------|---------|----------|
+| Redis < 5.0 | `ERR unknown command 'xgroup'` at startup | Upgrade Redis to 5.0+ |
+| Same `serverId` across instances | Only one instance processes events | Use unique `serverId` per process (e.g., hostname + PID) |
+| Handler modifies shared mutable state without synchronization | Race conditions, corrupted cache | Use full-replacement pattern, not incremental updates |
+| `maxLen` not set | Redis OOM after weeks/months | Set `stream.maxLen` to a reasonable value |
+| `defaultTimeoutMs` too low | Handlers killed during normal operation | Set timeout to 2-3x the expected handler duration |
+| `defaultTimeoutMs` too high | Slow handlers hold distributed locks for too long | Keep timeout under 60s; optimize slow handlers |
+| `claimMinIdleMs` < actual handler execution time | Messages claimed while still being processed | Set `claimMinIdleMs` > `defaultTimeoutMs` + `maxRetries * maxDelayMs` |
+| Non-idempotent handlers | Duplicate data on retry/crash recovery | Always use full-replacement, never incremental append |
+| Bootstrap `failFast: true` in production | One broken handler prevents all servers from starting | Use `failFast: false` in production, `true` only in development |
+| Orphaned consumer groups | Stream memory grows indefinitely | Periodically clean up groups for decommissioned servers |
+
+---
+
 ## Deploy to Game Server
 
 ```bash

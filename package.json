@@ -1,6 +1,6 @@
 {
   "name": "@gatrix/ripple",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Distributed Refresh Orchestrator - broadcast refresh events across all servers via Redis Streams",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

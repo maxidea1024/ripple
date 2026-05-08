@@ -35,12 +35,7 @@ export class RefreshPublisher {
    * @returns the stream entry ID assigned by Redis.
    */
   async publish(event: RefreshEvent): Promise<string> {
-    const entryId = await (this.redis as any).xadd(
-      this.streamConfig.key,
-      'MAXLEN',
-      '~',
-      String(this.streamConfig.maxLen),
-      '*',
+    const fields: (string | number)[] = [
       'requestId',
       event.requestId,
       'pattern',
@@ -51,6 +46,20 @@ export class RefreshPublisher {
       event.cascade ? '1' : '0',
       'createdAt',
       String(event.createdAt),
+    ];
+
+    // Serialize metadata as JSON if present
+    if (event.metadata && Object.keys(event.metadata).length > 0) {
+      fields.push('metadata', JSON.stringify(event.metadata));
+    }
+
+    const entryId = await (this.redis as any).xadd(
+      this.streamConfig.key,
+      'MAXLEN',
+      '~',
+      String(this.streamConfig.maxLen),
+      '*',
+      ...fields,
     );
 
     this.metrics.publishTotal.inc();
@@ -72,6 +81,7 @@ export class RefreshPublisher {
     pattern: string,
     triggeredBy?: string,
     cascade?: boolean,
+    metadata?: Record<string, string>,
   ): RefreshEvent {
     return {
       requestId: nanoid(),
@@ -79,6 +89,7 @@ export class RefreshPublisher {
       triggeredBy,
       cascade,
       createdAt: Date.now(),
+      metadata,
     };
   }
 }

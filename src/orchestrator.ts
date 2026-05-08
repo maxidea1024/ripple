@@ -11,6 +11,7 @@ import {
   OrchestratorConfig,
   BootstrapResult,
   DEFAULT_BOOTSTRAP_OPTIONS,
+  DEFAULT_HISTORY_CONFIG,
 } from './types';
 import { RefreshableRegistry } from './registry';
 import { DistributedLock } from './lock';
@@ -22,6 +23,7 @@ import { StreamConsumer } from './consumer';
 import { DebounceManager } from './debounce';
 import { RippleMetrics } from './metrics';
 import { createRefreshRouter } from './api';
+import { validateConfig, verifyServerIdUniqueness } from './validateConfig';
 
 export interface RippleInstance {
   /** Register a refreshable handler. Chainable. */
@@ -125,9 +127,11 @@ export function createRipple(
     debounce: debounceManager,
     metrics,
     serverId,
+    serviceType: config.serviceType,
     streamConfig: config.stream,
     consumerConfig: config.consumer,
     dedupeConfig: config.dedupe,
+    historyConfig: config.history,
   });
 
   let started = false;
@@ -148,19 +152,23 @@ export function createRipple(
       }
 
       log.info('Starting ripple', {
-        serverId: config.serverId,
+        serverId,
         registeredCount: registry.size,
       });
 
-      // Connect Redis
+      // Phase 1: Validate config (before any I/O)
+      validateConfig(config, registry.size, log);
+
+      // Phase 2: Connect Redis
       await commandRedis.connect();
       await subscriberRedis.connect();
       log.info('Redis connected');
 
-      // Verify Redis version (5.0+ required for Streams)
+      // Phase 3: Runtime checks (requires Redis)
       await verifyRedisVersion(commandRedis, createLogger('version-check'));
+      await verifyServerIdUniqueness(commandRedis, serverId, log);
 
-      // Validate dependency graph
+      // Phase 4: Validate dependency graph
       registry.validateDependencies();
       log.info('Dependency graph validated');
 
@@ -213,6 +221,8 @@ export function createRipple(
         publisher,
         metrics,
         createLogger,
+        redis: commandRedis,
+        historyConfig: { ...DEFAULT_HISTORY_CONFIG, ...config.history },
       });
     },
   };

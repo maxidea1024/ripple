@@ -10,9 +10,11 @@ import {
   StreamConfig,
   ConsumerConfig,
   DedupeConfig,
+  RippleHistoryEvent,
   DEFAULT_STREAM_CONFIG,
   DEFAULT_CONSUMER_CONFIG,
   DEFAULT_DEDUPE_CONFIG,
+  DEFAULT_HISTORY_CONFIG,
 } from './types';
 import { RefreshableRegistry } from './registry';
 import { RefreshExecutor } from './executor';
@@ -36,9 +38,12 @@ export class StreamConsumer {
   private readonly debounce: DebounceManager;
   private readonly metrics: RippleMetrics;
   private readonly serverId: string;
+  private readonly serviceType: string;
   private readonly streamConfig: StreamConfig;
   private readonly consumerConfig: ConsumerConfig;
   private readonly dedupeConfig: DedupeConfig;
+
+  private readonly historyConfig: import('./types').HistoryConfig;
 
   private running = false;
   private inflightCount = 0;
@@ -55,9 +60,11 @@ export class StreamConsumer {
     debounce: DebounceManager;
     metrics: RippleMetrics;
     serverId: string;
+    serviceType: string;
     streamConfig?: Partial<StreamConfig>;
     consumerConfig?: Partial<ConsumerConfig>;
     dedupeConfig?: Partial<DedupeConfig>;
+    historyConfig?: Partial<import('./types').HistoryConfig>;
   }) {
     this.redis = opts.redis;
     this.logger = opts.createLogger('consumer');
@@ -67,12 +74,14 @@ export class StreamConsumer {
     this.debounce = opts.debounce;
     this.metrics = opts.metrics;
     this.serverId = opts.serverId;
+    this.serviceType = opts.serviceType;
     this.streamConfig = { ...DEFAULT_STREAM_CONFIG, ...opts.streamConfig };
     this.consumerConfig = {
       ...DEFAULT_CONSUMER_CONFIG,
       ...opts.consumerConfig,
     };
     this.dedupeConfig = { ...DEFAULT_DEDUPE_CONFIG, ...opts.dedupeConfig };
+    this.historyConfig = { ...DEFAULT_HISTORY_CONFIG, ...opts.historyConfig };
     this.groupName = `group:${this.serverId}`;
   }
 
@@ -255,8 +264,11 @@ export class StreamConsumer {
                 requestId: finalEvent.requestId,
                 pattern: finalEvent.pattern,
                 startedAt: Date.now(),
+                metadata: finalEvent.metadata,
               };
-              return this.executor.execute(refreshable, ctx);
+              return this.executor.execute(refreshable, ctx).then(result => {
+                this.logHistory(finalEvent, refreshable.key, result, ctx.startedAt);
+              });
             })
             .catch((err) => {
               this.logger.error('Debounced execution failed', {
@@ -264,6 +276,7 @@ export class StreamConsumer {
                 refreshKey: refreshable.key,
                 error: err?.message,
               });
+              this.logHistory(event, refreshable.key, { key: refreshable.key, status: 'failure', durationMs: 0, error: err?.message }, Date.now());
             });
         } else {
           // Execute immediately
@@ -272,6 +285,7 @@ export class StreamConsumer {
             requestId: event.requestId,
             pattern: event.pattern,
             startedAt: Date.now(),
+            metadata: event.metadata,
           };
 
           const result = await this.executor.execute(refreshable, ctx);
@@ -282,6 +296,8 @@ export class StreamConsumer {
             status: result.status,
             durationMs: result.durationMs,
           });
+          
+          await this.logHistory(event, refreshable.key, result, ctx.startedAt);
         }
       }
     } finally {
@@ -289,6 +305,39 @@ export class StreamConsumer {
     }
 
     await this.ack(entryId);
+  }
+
+  private async logHistory(event: RefreshEvent, handlerKey: string, result: import('./types').RefreshResult, startedAt: number) {
+    const finishedAt = Date.now();
+    const historyEvent: RippleHistoryEvent = {
+      eventId: `${this.serverId}:${event.requestId}:${handlerKey}`,
+      serverId: this.serverId,
+      serviceType: this.serviceType,
+      requestId: event.requestId,
+      pattern: event.pattern,
+      handlerKey,
+      status: result.status,
+      durationMs: result.durationMs,
+      delayMs: startedAt - event.createdAt,
+      error: result.error,
+      retryCount: result.retryCount || 0,
+      triggeredBy: event.triggeredBy,
+      createdAt: event.createdAt,
+      startedAt,
+      finishedAt,
+    };
+    
+    try {
+      const fields: string[] = [];
+      for (const [k, v] of Object.entries(historyEvent)) {
+        if (v !== undefined && v !== null) {
+          fields.push(k, String(v));
+        }
+      }
+      await (this.redis as any).xadd(this.historyConfig.key, 'MAXLEN', '~', this.historyConfig.maxLen, '*', ...fields);
+    } catch (err: any) {
+      this.logger.warn('Failed to save ripple history', { error: err?.message, handlerKey });
+    }
   }
 
   /**
@@ -306,12 +355,23 @@ export class StreamConsumer {
 
     if (!requestId || !pattern || !createdAt) return null;
 
+    let metadata: Record<string, string> | undefined;
+    const rawMetadata = map.get('metadata');
+    if (rawMetadata) {
+      try {
+        metadata = JSON.parse(rawMetadata);
+      } catch {
+        // Ignore malformed metadata
+      }
+    }
+
     return {
       requestId,
       pattern,
       triggeredBy: map.get('triggeredBy') || undefined,
       cascade: map.get('cascade') === '1',
       createdAt: Number(createdAt),
+      metadata,
     };
   }
 

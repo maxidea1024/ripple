@@ -34,6 +34,9 @@ export interface RefreshContext {
 
   /** Epoch ms when this refresh execution started */
   startedAt: number;
+
+  /** Optional key-value metadata passed from the publisher */
+  metadata?: Record<string, string>;
 }
 
 /**
@@ -81,10 +84,13 @@ export interface RefreshEvent {
 
   /** Epoch ms when the event was created */
   createdAt: number;
+
+  /** Optional key-value metadata (e.g. { tableName: 'Item' }) */
+  metadata?: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------
-// Results
+// Results & History
 // ---------------------------------------------------------------------------
 
 export type RefreshStatus = 'success' | 'failure' | 'timeout' | 'skipped';
@@ -96,6 +102,25 @@ export interface RefreshResult {
   durationMs: number;
   error?: string;
   retryCount?: number;
+}
+
+/** Represents a single execution history event */
+export interface RippleHistoryEvent {
+  eventId: string;
+  serverId: string;
+  serviceType?: string;
+  requestId: string;
+  pattern: string;
+  handlerKey: string;
+  status: RefreshStatus;
+  durationMs: number;
+  delayMs: number;
+  error?: string;
+  retryCount?: number;
+  triggeredBy?: string;
+  createdAt: number;
+  startedAt: number;
+  finishedAt: number;
 }
 
 /** Result of bootstrap loading. */
@@ -173,9 +198,19 @@ export interface ApiConfig {
   enabled: boolean;
 }
 
+export interface HistoryConfig {
+  /** Redis Stream key name for history (default: 'ripple:history') */
+  key: string;
+  /** MAXLEN for history stream trimming (default: 5000) */
+  maxLen: number;
+}
+
 export interface OrchestratorConfig {
   /** Unique server identifier (default: hostname-pid) */
   serverId?: string;
+
+  /** Service type identifier (e.g. 'lobbyd', 'authd', 'admind') */
+  serviceType: string;
 
   redis: RedisConfig;
   stream?: Partial<StreamConfig>;
@@ -184,6 +219,7 @@ export interface OrchestratorConfig {
   dedupe?: Partial<DedupeConfig>;
   bootstrap?: Partial<BootstrapOptions>;
   api?: Partial<ApiConfig>;
+  history?: Partial<HistoryConfig>;
 
   /** Default per-handler timeout in ms (default: 30000) */
   defaultTimeoutMs?: number;
@@ -195,6 +231,11 @@ export interface OrchestratorConfig {
 // ---------------------------------------------------------------------------
 // Defaults
 // ---------------------------------------------------------------------------
+
+export const DEFAULT_HISTORY_CONFIG: HistoryConfig = {
+  key: 'ripple:history',
+  maxLen: 5000,
+};
 
 export const DEFAULT_STREAM_CONFIG: StreamConfig = {
   key: 'refresh-stream',

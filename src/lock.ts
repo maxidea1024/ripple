@@ -112,4 +112,43 @@ export class DistributedLock {
     this.logger.debug('Lock extend attempt', { key, lockId, ttlMs, extended });
     return extended;
   }
+
+  /**
+   * Release ALL locks for a given serverId.
+   *
+   * Used during bootstrap to flush stale locks left by a previous process
+   * incarnation that was killed before it could release its locks.
+   * Without this, a rapid PM2 restart with the same serverId will fail to
+   * acquire locks because the old SET NX keys still have remaining TTL.
+   */
+  async releaseAllForServer(serverId: string): Promise<number> {
+    const pattern = `${this.keyPrefix}:lock:${serverId}:*`;
+    let cursor = '0';
+    let deletedCount = 0;
+
+    do {
+      const [nextCursor, keys] = await this.redis.scan(
+        cursor,
+        'MATCH',
+        pattern,
+        'COUNT',
+        100,
+      );
+      cursor = nextCursor;
+
+      if (keys.length > 0) {
+        await this.redis.del(...keys);
+        deletedCount += keys.length;
+      }
+    } while (cursor !== '0');
+
+    if (deletedCount > 0) {
+      this.logger.info('Flushed stale locks from previous incarnation', {
+        serverId,
+        deletedCount,
+      });
+    }
+
+    return deletedCount;
+  }
 }

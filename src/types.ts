@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// @gatrix/ripple ??Type Definitions
+// @gatrix/ripple — Type Definitions
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -10,7 +10,7 @@
  * Trigger source that caused this refresh invocation.
  *
  * - `bootstrap`: server startup preload
- * - `refresh`:   runtime refresh via Redis Stream event
+ * - `refresh`:   runtime refresh via Pub/Sub event
  * - `retry`:     automatic retry after a failed attempt
  */
 export type RefreshTrigger = 'bootstrap' | 'refresh' | 'retry';
@@ -67,15 +67,18 @@ export interface Refreshable {
 // Events
 // ---------------------------------------------------------------------------
 
-/** Payload published to the Redis Stream. */
+/** Payload published via Redis Pub/Sub. */
 export interface RefreshEvent {
   /** Unique request identifier */
   requestId: string;
 
-  /** Glob pattern (e.g. 'event/*') */
+  /** Glob pattern (e.g. 'cms/*') */
   pattern: string;
 
-  /** Optional origin identifier (e.g. 'admin-api', 'data-webhook') */
+  /** Environment identifier for per-environment scoping */
+  environmentId: string;
+
+  /** Optional origin identifier (e.g. 'admin-api', 'uwocli') */
   triggeredBy?: string;
 
   /**
@@ -93,7 +96,7 @@ export interface RefreshEvent {
 }
 
 // ---------------------------------------------------------------------------
-// Results & History
+// Results
 // ---------------------------------------------------------------------------
 
 export type RefreshStatus = 'success' | 'failure' | 'timeout' | 'skipped';
@@ -105,25 +108,6 @@ export interface RefreshResult {
   durationMs: number;
   error?: string;
   retryCount?: number;
-}
-
-/** Represents a single execution history event */
-export interface RippleHistoryEvent {
-  eventId: string;
-  serverId: string;
-  serviceType?: string;
-  requestId: string;
-  pattern: string;
-  handlerKey: string;
-  status: RefreshStatus;
-  durationMs: number;
-  delayMs: number;
-  error?: string;
-  retryCount?: number;
-  triggeredBy?: string;
-  createdAt: number;
-  startedAt: number;
-  finishedAt: number;
 }
 
 /** Result of bootstrap loading. */
@@ -149,26 +133,6 @@ export interface RedisConfig {
   options?: Record<string, unknown>;
 }
 
-export interface StreamConfig {
-  /** Redis Stream key name (default: 'refresh-stream') */
-  key: string;
-  /** XREADGROUP BLOCK timeout in ms (default: 5000) */
-  blockMs: number;
-  /** XREADGROUP COUNT (default: 10) */
-  batchSize: number;
-  /** MAXLEN for stream trimming (default: 10000) */
-  maxLen: number;
-}
-
-export interface ConsumerConfig {
-  /** Interval for pending message reclaim in ms (default: 30000) */
-  pendingReclaimIntervalMs: number;
-  /** Minimum idle time for XCLAIM in ms (default: 60000) */
-  claimMinIdleMs: number;
-  /** Maximum number of pending messages to reclaim per cycle (default: 100) */
-  claimBatchSize: number;
-}
-
 export interface RetryConfig {
   /** Maximum retry attempts (default: 3) */
   maxRetries: number;
@@ -181,7 +145,7 @@ export interface RetryConfig {
 }
 
 export interface DedupeConfig {
-  /** TTL for dedup keys in seconds (default: 3600) */
+  /** TTL for dedup keys in seconds (default: 300) */
   ttlSec: number;
 }
 
@@ -201,11 +165,9 @@ export interface ApiConfig {
   enabled: boolean;
 }
 
-export interface HistoryConfig {
-  /** Redis Stream key name for history (default: 'ripple:history') */
-  key: string;
-  /** MAXLEN for history stream trimming (default: 5000) */
-  maxLen: number;
+export interface PubSubConfig {
+  /** Pub/Sub channel name (default: 'ripple:fanout') */
+  channel: string;
 }
 
 export interface OrchestratorConfig {
@@ -215,14 +177,18 @@ export interface OrchestratorConfig {
   /** Service type identifier (e.g. 'lobbyd', 'authd', 'admind') */
   serviceType: string;
 
+  /**
+   * Environment identifier for per-environment channel scoping.
+   * Events are published/subscribed on channel `ripple:fanout:${environmentId}`.
+   */
+  environmentId: string;
+
   redis: RedisConfig;
-  stream?: Partial<StreamConfig>;
-  consumer?: Partial<ConsumerConfig>;
+  pubsub?: Partial<PubSubConfig>;
   retry?: Partial<RetryConfig>;
   dedupe?: Partial<DedupeConfig>;
   bootstrap?: Partial<BootstrapOptions>;
   api?: Partial<ApiConfig>;
-  history?: Partial<HistoryConfig>;
 
   /** Default per-handler timeout in ms (default: 30000) */
   defaultTimeoutMs?: number;
@@ -235,22 +201,8 @@ export interface OrchestratorConfig {
 // Defaults
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_HISTORY_CONFIG: HistoryConfig = {
-  key: 'ripple:history',
-  maxLen: 5000,
-};
-
-export const DEFAULT_STREAM_CONFIG: StreamConfig = {
-  key: 'refresh-stream',
-  blockMs: 5000,
-  batchSize: 10,
-  maxLen: 10000,
-};
-
-export const DEFAULT_CONSUMER_CONFIG: ConsumerConfig = {
-  pendingReclaimIntervalMs: 30000,
-  claimMinIdleMs: 60000,
-  claimBatchSize: 100,
+export const DEFAULT_PUBSUB_CONFIG: PubSubConfig = {
+  channel: 'ripple:fanout',
 };
 
 export const DEFAULT_RETRY_CONFIG: RetryConfig = {
@@ -261,7 +213,7 @@ export const DEFAULT_RETRY_CONFIG: RetryConfig = {
 };
 
 export const DEFAULT_DEDUPE_CONFIG: DedupeConfig = {
-  ttlSec: 3600,
+  ttlSec: 300,
 };
 
 export const DEFAULT_BOOTSTRAP_OPTIONS: BootstrapOptions = {

@@ -1,66 +1,46 @@
 // ---------------------------------------------------------------------------
-// @gatrix/ripple ??Refresh Publisher
+// @gatrix/ripple — Refresh Publisher
+//
+// Publishes refresh events via Redis Pub/Sub.
 // ---------------------------------------------------------------------------
 
 import Redis from 'ioredis';
 import { nanoid } from 'nanoid';
 import { RippleLogger, RippleLoggerFactory } from './logger';
-import { RefreshEvent, StreamConfig, DEFAULT_STREAM_CONFIG } from './types';
+import { RefreshEvent } from './types';
 import { RippleMetrics } from './metrics';
 
 /**
- * Publishes refresh events to the Redis Stream.
+ * Publishes refresh events via Redis Pub/Sub PUBLISH command.
  */
 export class RefreshPublisher {
   private readonly redis: Redis.Redis;
   private readonly logger: RippleLogger;
   private readonly metrics: RippleMetrics;
-  private readonly streamConfig: StreamConfig;
+  private readonly channel: string;
 
   constructor(
     redis: Redis.Redis,
     createLogger: RippleLoggerFactory,
     metrics: RippleMetrics,
-    streamConfig?: Partial<StreamConfig>,
+    /** Pub/Sub channel name (default: 'ripple:fanout') */
+    channel?: string,
   ) {
     this.redis = redis;
     this.logger = createLogger('publisher');
     this.metrics = metrics;
-    this.streamConfig = { ...DEFAULT_STREAM_CONFIG, ...streamConfig };
+    this.channel = channel ?? 'ripple:fanout';
   }
 
   /**
-   * Publish a refresh event to the stream.
+   * Publish a refresh event via Pub/Sub.
    *
-   * @returns the stream entry ID assigned by Redis.
+   * @returns the number of subscribers that received the message.
    */
-  async publish(event: RefreshEvent): Promise<string> {
-    const fields: (string | number)[] = [
-      'requestId',
-      event.requestId,
-      'pattern',
-      event.pattern,
-      'triggeredBy',
-      event.triggeredBy ?? '',
-      'cascade',
-      event.cascade ? '1' : '0',
-      'createdAt',
-      String(event.createdAt),
-    ];
+  async publish(event: RefreshEvent): Promise<number> {
+    const message = JSON.stringify(event);
 
-    // Serialize metadata as JSON if present
-    if (event.metadata && Object.keys(event.metadata).length > 0) {
-      fields.push('metadata', JSON.stringify(event.metadata));
-    }
-
-    const entryId = await (this.redis as any).xadd(
-      this.streamConfig.key,
-      'MAXLEN',
-      '~',
-      String(this.streamConfig.maxLen),
-      '*',
-      ...fields,
-    );
+    const receiverCount = await this.redis.publish(this.channel, message);
 
     this.metrics.publishTotal.inc();
 
@@ -68,10 +48,11 @@ export class RefreshPublisher {
       requestId: event.requestId,
       pattern: event.pattern,
       triggeredBy: event.triggeredBy,
-      entryId,
+      receiverCount,
+      channel: this.channel,
     });
 
-    return entryId;
+    return receiverCount;
   }
 
   /**
@@ -79,6 +60,7 @@ export class RefreshPublisher {
    */
   static createEvent(
     pattern: string,
+    environmentId: string,
     triggeredBy?: string,
     cascade?: boolean,
     metadata?: Record<string, string>,
@@ -86,6 +68,7 @@ export class RefreshPublisher {
     return {
       requestId: nanoid(),
       pattern,
+      environmentId,
       triggeredBy,
       cascade,
       createdAt: Date.now(),

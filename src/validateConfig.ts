@@ -7,8 +7,6 @@
 
 import {
   OrchestratorConfig,
-  DEFAULT_STREAM_CONFIG,
-  DEFAULT_CONSUMER_CONFIG,
   DEFAULT_RETRY_CONFIG,
 } from './types';
 import { RippleLogger } from './logger';
@@ -61,6 +59,15 @@ export function validateConfig(
     });
   }
 
+  // ── environmentId ──
+  if (!config.environmentId || typeof config.environmentId !== 'string' || config.environmentId.trim().length === 0) {
+    errors.push({
+      field: 'environmentId',
+      message: 'environmentId is required and must be a non-empty string',
+      resolution: 'Set environmentId to identify this environment (e.g. "prod-kr", "staging")',
+    });
+  }
+
   // ── serverId ──
   const serverId = config.serverId;
   if (serverId !== undefined && (typeof serverId !== 'string' || serverId.trim().length === 0)) {
@@ -68,33 +75,6 @@ export function validateConfig(
       field: 'serverId',
       message: 'serverId must be a non-empty string',
       resolution: 'Set serverId to a unique identifier (e.g. hostname + PID)',
-    });
-  }
-
-  // ── Stream config ──
-  const stream = { ...DEFAULT_STREAM_CONFIG, ...config.stream };
-
-  if (stream.maxLen <= 0) {
-    errors.push({
-      field: 'stream.maxLen',
-      message: `maxLen is ${stream.maxLen} — stream will grow without bound, causing Redis OOM`,
-      resolution: 'Set stream.maxLen to a positive value (recommended: 10000)',
-    });
-  }
-
-  if (stream.blockMs < 1000 || stream.blockMs > 60000) {
-    warnings.push({
-      field: 'stream.blockMs',
-      message: `blockMs is ${stream.blockMs}ms (recommended: 1000-60000ms)`,
-      resolution: 'Set stream.blockMs between 1000-60000ms (default: 5000)',
-    });
-  }
-
-  if (stream.batchSize < 1 || stream.batchSize > 1000) {
-    warnings.push({
-      field: 'stream.batchSize',
-      message: `batchSize is ${stream.batchSize} (recommended: 1-1000)`,
-      resolution: 'Set stream.batchSize between 1-1000 (default: 10)',
     });
   }
 
@@ -117,33 +97,9 @@ export function validateConfig(
     });
   }
 
-  // ── Consumer / XCLAIM consistency ──
-  const consumer = { ...DEFAULT_CONSUMER_CONFIG, ...config.consumer };
+  // ── Retry config ──
   const retry = { ...DEFAULT_RETRY_CONFIG, ...config.retry };
 
-  // claimMinIdleMs should be > defaultTimeoutMs + worst-case retry delay
-  const worstCaseRetryDelayMs = retry.maxRetries * retry.maxDelayMs;
-  const minSafeClaimIdle = defaultTimeoutMs + worstCaseRetryDelayMs;
-
-  if (consumer.claimMinIdleMs < defaultTimeoutMs) {
-    errors.push({
-      field: 'consumer.claimMinIdleMs',
-      message: `claimMinIdleMs (${consumer.claimMinIdleMs}ms) < defaultTimeoutMs (${defaultTimeoutMs}ms) — ` +
-        `messages will be stolen while handlers are still processing`,
-      resolution: `Set claimMinIdleMs to at least ${minSafeClaimIdle}ms ` +
-        `(defaultTimeoutMs + maxRetries × maxDelayMs = ${defaultTimeoutMs} + ${retry.maxRetries} × ${retry.maxDelayMs})`,
-    });
-  } else if (consumer.claimMinIdleMs < minSafeClaimIdle) {
-    warnings.push({
-      field: 'consumer.claimMinIdleMs',
-      message: `claimMinIdleMs (${consumer.claimMinIdleMs}ms) may be too low considering retry delays. ` +
-        `Safe minimum: ${minSafeClaimIdle}ms`,
-      resolution: `Consider setting claimMinIdleMs to ${minSafeClaimIdle}ms ` +
-        `(defaultTimeoutMs + maxRetries × maxDelayMs)`,
-    });
-  }
-
-  // ── Retry config ──
   if (retry.maxRetries < 0) {
     errors.push({
       field: 'retry.maxRetries',
@@ -196,7 +152,7 @@ export function validateConfig(
     );
   }
 
-  log.info('Configuration validated', { registeredCount });
+  log.info('Configuration validated', { registeredCount, environmentId: config.environmentId });
 }
 
 // ---------------------------------------------------------------------------

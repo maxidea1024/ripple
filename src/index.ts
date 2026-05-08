@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// @gatrix/ripple ??Public API
+// @gatrix/ripple — Public API
 // ---------------------------------------------------------------------------
 
 // Core types
@@ -13,8 +13,7 @@ export {
   BootstrapResult,
   OrchestratorConfig,
   RedisConfig,
-  StreamConfig,
-  ConsumerConfig,
+  PubSubConfig,
   RetryConfig,
   DedupeConfig,
   BootstrapOptions,
@@ -36,7 +35,7 @@ export { createRipple, RippleInstance } from './orchestrator';
 // Individual components (for advanced usage)
 export { RefreshableRegistry } from './registry';
 export { RefreshPublisher } from './publisher';
-export { StreamConsumer } from './consumer';
+export { PubSubConsumer } from './consumer';
 export { RefreshExecutor } from './executor';
 export { BootstrapLoader } from './bootstrap';
 export { DistributedLock } from './lock';

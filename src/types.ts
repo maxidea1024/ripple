@@ -58,6 +58,9 @@ export interface Refreshable {
 
   /** Debounce window in ms; repeated triggers within this window are merged */
   debounceMs?: number;
+
+  /** Per-handler retry override. Set { maxRetries: 0 } to disable retries. */
+  retry?: Partial<RetryConfig>;
 }
 
 // ---------------------------------------------------------------------------

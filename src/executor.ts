@@ -116,12 +116,13 @@ export class RefreshExecutor {
     log: RippleLogger,
     logCtx: Record<string, unknown>,
   ): Promise<RefreshResult> {
+    const effectiveRetryConfig = { ...this.retryConfig, ...refreshable.retry };
     let lastError: Error | undefined;
 
     const maxAttempts =
       originalCtx.trigger === 'bootstrap'
         ? 1 // bootstrap: no retry, fail-fast
-        : this.retryConfig.maxRetries + 1;
+        : effectiveRetryConfig.maxRetries + 1;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const isRetry = attempt > 0;

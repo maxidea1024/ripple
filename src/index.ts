@@ -10,6 +10,7 @@ export {
   RefreshEvent,
   RefreshResult,
   RefreshStatus,
+  ExecutionReport,
   BootstrapResult,
   OrchestratorConfig,
   RedisConfig,

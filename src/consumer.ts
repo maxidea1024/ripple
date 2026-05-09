@@ -16,6 +16,7 @@ import { RippleLogger, RippleLoggerFactory } from './logger';
 import {
   RefreshEvent,
   RefreshContext,
+  ExecutionReport,
   DedupeConfig,
   DEFAULT_DEDUPE_CONFIG,
 } from './types';
@@ -36,9 +37,12 @@ export interface PubSubConsumerOptions {
   metrics: RippleMetrics;
   serverId: string;
   serviceType: string;
+  environmentId: string;
   /** Pub/Sub channel name (default: 'ripple:fanout') */
   channel?: string;
   dedupeConfig?: Partial<DedupeConfig>;
+  /** Callback invoked after each handler execution completes. */
+  onExecutionComplete?: (report: ExecutionReport) => Promise<void> | void;
 }
 
 /**
@@ -57,8 +61,11 @@ export class PubSubConsumer {
   private readonly debounce: DebounceManager;
   private readonly metrics: RippleMetrics;
   private readonly serverId: string;
+  private readonly serviceType: string;
+  private readonly environmentId: string;
   private readonly channel: string;
   private readonly dedupeConfig: DedupeConfig;
+  private readonly onExecutionComplete?: (report: ExecutionReport) => Promise<void> | void;
 
   private running = false;
   private inflightCount = 0;
@@ -72,8 +79,11 @@ export class PubSubConsumer {
     this.debounce = opts.debounce;
     this.metrics = opts.metrics;
     this.serverId = opts.serverId;
+    this.serviceType = opts.serviceType;
+    this.environmentId = opts.environmentId;
     this.channel = opts.channel ?? 'ripple:fanout';
     this.dedupeConfig = { ...DEFAULT_DEDUPE_CONFIG, ...opts.dedupeConfig };
+    this.onExecutionComplete = opts.onExecutionComplete;
   }
 
   /**
@@ -239,10 +249,48 @@ export class PubSubConsumer {
             status: result.status,
             durationMs: result.durationMs,
           });
+
+          // Fire-and-forget execution report
+          this.reportExecution(event.requestId, refreshable.key, result.status, result.durationMs, result.error);
         }
       }
     } finally {
       this.inflightCount--;
+    }
+  }
+
+  /**
+   * Fire-and-forget execution report callback.
+   */
+  private reportExecution(
+    requestId: string,
+    handlerKey: string,
+    status: string,
+    durationMs: number,
+    error?: string,
+  ): void {
+    if (!this.onExecutionComplete) return;
+
+    const report: ExecutionReport = {
+      requestId,
+      environmentId: this.environmentId,
+      serverId: this.serverId,
+      serviceType: this.serviceType,
+      handlerKey,
+      status: status as ExecutionReport['status'],
+      durationMs,
+      error,
+    };
+
+    try {
+      const maybePromise = this.onExecutionComplete(report);
+      if (maybePromise && typeof (maybePromise as any).catch === 'function') {
+        (maybePromise as Promise<void>).catch((err) => {
+          this.logger.debug('onExecutionComplete callback failed', { error: err?.message });
+        });
+      }
+    } catch (err: any) {
+      this.logger.debug('onExecutionComplete callback failed', { error: err?.message });
     }
   }
 

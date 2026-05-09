@@ -141,8 +141,10 @@ export function createRipple(
     metrics,
     serverId,
     serviceType: config.serviceType,
+    environmentId: config.environmentId,
     channel,
     dedupeConfig: config.dedupe,
+    onExecutionComplete: config.onExecutionComplete,
   });
 
   let started = false;
@@ -236,6 +238,7 @@ export function createRipple(
         metrics,
         createLogger,
         environmentId: config.environmentId,
+        onRefreshPublished: config.onRefreshPublished,
       });
     },
   };

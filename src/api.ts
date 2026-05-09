@@ -26,8 +26,19 @@ export function createRefreshRouter(opts: {
   metrics: RippleMetrics;
   createLogger: RippleLoggerFactory;
   environmentId: string;
+  /** Optional callback invoked after a refresh event is successfully published. */
+  onRefreshPublished?: (info: {
+    requestId: string;
+    pattern: string;
+    environmentId: string;
+    triggeredBy: string;
+    cascade: boolean;
+    receiverCount: number;
+    matchedKeys: string[];
+    metadata?: Record<string, string>;
+  }) => void;
 }): Router {
-  const { registry, publisher, metrics, createLogger, environmentId } = opts;
+  const { registry, publisher, metrics, createLogger, environmentId, onRefreshPublished } = opts;
   const log = createLogger('api');
   const router = Router();
 
@@ -70,6 +81,22 @@ export function createRefreshRouter(opts: {
         matchedKeys,
         receiverCount,
       });
+
+      // Notify caller for DB recording
+      if (onRefreshPublished) {
+        try {
+          onRefreshPublished({
+            requestId: event.requestId,
+            pattern,
+            environmentId,
+            triggeredBy: triggeredBy || 'unknown',
+            cascade: !!cascade,
+            receiverCount,
+            matchedKeys,
+            metadata,
+          });
+        } catch { /* fire-and-forget */ }
+      }
 
       return res.json({
         requestId: event.requestId,

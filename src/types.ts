@@ -110,6 +110,18 @@ export interface RefreshResult {
   retryCount?: number;
 }
 
+/** Report sent via onExecutionComplete callback after each handler execution. */
+export interface ExecutionReport {
+  requestId: string;
+  environmentId: string;
+  serverId: string;
+  serviceType: string;
+  handlerKey: string;
+  status: RefreshStatus;
+  durationMs: number;
+  error?: string;
+}
+
 /** Result of bootstrap loading. */
 export interface BootstrapResult {
   totalCount: number;
@@ -195,6 +207,29 @@ export interface OrchestratorConfig {
 
   /** Log level for pino (default: 'info') */
   logLevel?: string;
+
+  /**
+   * Callback invoked after each handler execution completes.
+   * Use this to record per-server execution results to a database.
+   * Called fire-and-forget — errors are logged but do not affect processing.
+   */
+  onExecutionComplete?: (report: ExecutionReport) => Promise<void> | void;
+
+  /**
+   * Callback invoked after a refresh event is published via the API router.
+   * Use this to record the refresh request to a history database (e.g. c_ripple_history).
+   * Called fire-and-forget — errors do not affect the API response.
+   */
+  onRefreshPublished?: (info: {
+    requestId: string;
+    pattern: string;
+    environmentId: string;
+    triggeredBy: string;
+    cascade: boolean;
+    receiverCount: number;
+    matchedKeys: string[];
+    metadata?: Record<string, string>;
+  }) => void;
 }
 
 // ---------------------------------------------------------------------------
